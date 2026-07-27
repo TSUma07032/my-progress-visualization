@@ -1,114 +1,36 @@
-これまでの議論を集約した「マップ型 思考ログ構築システム」の詳細仕様書を作成しました。開発時の設計図としてそのままご利用いただけます。
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
----
+## Getting Started
 
-# マップ型 思考ログ構築システム 要求仕様書
+First, run the development server:
 
-## 1. システム概要
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
 
-本システムは、構造化されていない日常の進捗メモ（思考ログ）から、プロジェクト全体における「現在地」と、綺麗に丸め込まれていない「葛藤・試行錯誤」をAIによって自動抽出し、議論を活性化させるための進捗資料を即座に生成するWebアプリケーションである。
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-**【目的】**
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-* 進捗資料作成にかかる時間（半日）を数分に短縮する。
-* 全体像の把握を容易にし、「今何のための話をしているのか」を視覚的に共有する。
-* 成功体験だけでなく、試行錯誤や本音（葛藤）を残すことで、本質的な議論を生み出す。
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## 2. システム構成・技術スタック
+## Learn More
 
-完全無料で運用でき、かつ開発スピードを最大化する構成とする。
+To learn more about Next.js, take a look at the following resources:
 
-* **フロントエンド:** Next.js (React), Tailwind CSS
-* **マップ描画:** React Flow または Mermaid.js
-* **バックエンド (API連携):** Next.js API Routes
-* **データベース:** Firebase Cloud Firestore (NoSQL)
-* **ホスティング・デプロイ:** Firebase App Hosting
-* **LLM (AI):** Gemini API (無料枠 / `gemini-2.5-flash` または `gemini-2.5-flash-lite`)
-* ※JSONによる構造化出力（Structured Outputs）を利用
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Deploy on Vercel
 
-## 3. 主要機能要件
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-### 3.1 メモ入力とAI解析機能
-
-* **テキスト入力:** Markdown形式、およびNotion等からのコピペに対応したシンプルなテキストエリア。
-* **AI解析の実行:** 実行ボタン押下により、バックエンド経由でGemini APIにデータを送信する。
-* **データの構造化抽出:** AIは入力メモから以下の4項目をJSON形式で抽出・生成する。
-1. **結論:** 今週の成果や進捗を簡潔に要約（1〜2行）。
-2. **葛藤・試行錯誤:** ユーザーの悩み、エラー、失敗談、疑問などを**意図的に残して**要約。
-3. **議論ポイント:** 報告相手（教授や上司）へ相談すべき具体的な問いの提案。
-4. **マッピング位置 (ノードID):** 入力内容がプロジェクトのどの要素（ノード）に該当するかを特定。
-
-
-
-### 3.2 プロジェクトマップ機能（ナレッジ蓄積）
-
-* **全体像の可視化:** プロジェクトの目的を頂点としたツリー構造（マインドマップ風）を描画する。
-* **現在地のハイライト:** AIが特定したノードを視覚的に強調し、「今週の進捗箇所」として表示する。
-* **ノードの自動生成（マップの進化）:** AIが既存のノードに該当しない新規トピックだと判断した場合、ツリーに新たな子ノードを自動で追加する。
-* **ノード詳細表示機能:** マップ上の任意のノードをクリックすると、過去にそのノードに紐づいて登録された「進捗ログ（結論・葛藤など）」が時系列で一覧表示される。
-
-### 3.3 UI上の手動編集機能（オーバーライド）
-
-* AIが出力した「結論」「葛藤」「議論ポイント」、および「現在地ノード」は、ユーザーが画面上で直接テキスト編集・変更（保存）できる仕様とする。
-
-### 3.4 PDF出力・印刷機能
-
-* ブラウザの標準印刷機能（`window.print()`）とCSSの印刷メディアクエリ（`@media print`）を使用する。
-* **印刷レイアウト:** A4サイズ（横または縦）に最適化し、入力フォームやボタン類を非表示にする。マップ（現在地ハイライト状態）と、今週の進捗パネル（または選択したノードの詳細履歴）のみを出力する。
-
-## 4. データベース設計 (Firestore スキーマ案)
-
-プロジェクト単位でデータを管理し、マップの構成要素（Nodes）と毎回の提出ログ（Logs）を分割して保持する。
-
-### コレクション: `projects`
-
-| フィールド名 | 型 | 説明 |
-| --- | --- | --- |
-| `id` | String | プロジェクトのユニークID |
-| `title` | String | プロジェクト名 |
-| `createdAt` | Timestamp | 作成日時 |
-| `updatedAt` | Timestamp | 最終更新日時 |
-
-### サブコレクション: `nodes` (projects/{projectId}/nodes)
-
-ツリー構造の各要素（実験、仮説など）を管理する。
-
-| フィールド名 | 型 | 説明 |
-| --- | --- | --- |
-| `id` | String | ノードのユニークID |
-| `parentId` | String/Null | 親ノードのID（ルートの場合はNull） |
-| `label` | String | ノードの表示名（例：「実験1：パラメータ調整」） |
-| `createdAt` | Timestamp | 作成日時 |
-
-### サブコレクション: `logs` (projects/{projectId}/logs)
-
-毎週入力される進捗データの履歴を管理する。
-
-| フィールド名 | 型 | 説明 |
-| --- | --- | --- |
-| `id` | String | ログのユニークID |
-| `nodeId` | String | 紐づく対象ノードのID（現在地） |
-| `rawMemo` | String | ユーザーが入力した生のMarkdownテキスト |
-| `conclusion` | String | AI（または手動修正後）の結論 |
-| `struggle` | String | AI（または手動修正後）の葛藤・試行錯誤 |
-| `discussion` | String | AI（または手動修正後）の議論ポイント |
-| `createdAt` | Timestamp | 提出・作成日時 |
-
-## 5. AIプロンプト方針と例外処理
-
-### 5.1 システムプロンプトのコア指示
-
-AIの出力センスを最適化するため、以下の指示をプロンプトの根幹に据える。
-
-> 「あなたは研究・プロジェクトの編集者です。ユーザーの入力メモから情報を抽出する際、文章を綺麗に要約して成功体験だけにするのは厳禁です。ユーザーが悩んでいること、試行錯誤したプロセス、目的とのズレに対する違和感などを『葛藤・議論のタネ』として絶対に省略せず、強調して抽出してください。」
-
-### 5.2 例外処理
-
-* **入力が短すぎる・文脈不足の場合:**
-AIが現在地ノードを既存ツリーから特定できない場合は、「未分類 (Uncategorized)」という新規ノードを自動生成し、そこに紐付ける。
-* **APIエラー・タイムアウト:**
-Gemini APIからの応答が失敗した場合、画面上にトースト通知（「AIによる整理に失敗しました」）を表示し、再試行ボタンを提供する。
-* **ハルシネーション（AIの捏造）対策:**
-出力は必ず元の `rawMemo` の内容に依拠するようプロンプトで制約をかけ、最終的にユーザーが手動で編集（オーバーライド）して事実確認を行う運用とする。
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

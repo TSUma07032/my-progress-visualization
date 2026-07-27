@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900;
+  }
+}
+
+/* Printing styling */
+@media print {
+  /* Hide all screen-only elements */
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  /* Show print-only elements */
+  .print-only {
+    display: block !important;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 20px;
+    background: white;
+  }
+
+  /* Force page size to A4 */
+  @page {
+    size: A4;
+    margin: 20mm;
+  }
+}
+
+/* Hide print elements on screen */
+@media screen {
+  .print-only {
+    display: none !important;
+  }
+}
