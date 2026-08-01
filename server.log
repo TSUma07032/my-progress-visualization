@@ -1,0 +1,18 @@
+
+> temp_next@0.1.0 dev
+> next dev --turbopack
+
+   ▲ Next.js 15.1.0 (Turbopack)
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 1306ms
+ ○ Compiling / ...
+ ✓ Compiled / in 7.2s
+ HEAD / 200 in 8422ms
+ GET / 200 in 119ms
+ GET / 200 in 72ms
+ GET / 200 in 80ms
+ ✓ Compiled /api/analyze in 425ms
+ POST /api/analyze 200 in 540ms

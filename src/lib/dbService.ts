@@ -88,6 +88,7 @@ Gemini 2.5-flashを用いてJSONの構造化出力を試行した。
       struggle: "極稀に発生するハルシネーションと、出力スキーマから逸脱したキーが返された場合の安全なフォールバック設計に苦戦した。",
       discussion: "例外的なノード出力があった際、既存ツリーにどうマッピングさせるか、または「未分類」に綺麗に振り分けるルール作りについて、相談したい。",
       createdAt: Date.now() - 3600000 * 24,
+      talked: false,
     },
   ],
 };
@@ -137,7 +138,7 @@ export const dbService = {
             await this.createNode(defaultProj.id, node.label, node.parentId, node.id);
           }
           for (const log of DEFAULT_LOGS[defaultProj.id]) {
-            await this.createLog(defaultProj.id, log.nodeId, log.rawMemo, log.conclusion, log.struggle, log.discussion, log.id, log.createdAt);
+            await this.createLog(defaultProj.id, log.nodeId, log.rawMemo, log.conclusion, log.struggle, log.discussion, log.id, log.createdAt, log.talked);
           }
           return [defaultProj];
         }
@@ -293,6 +294,7 @@ export const dbService = {
             conclusion: data.conclusion || "",
             struggle: data.struggle || "",
             discussion: data.discussion || "",
+            talked: data.talked === undefined ? false : data.talked,
             createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
           });
         });
@@ -315,10 +317,12 @@ export const dbService = {
     struggle: string,
     discussion: string,
     customId?: string,
-    customCreatedAt?: number
+    customCreatedAt?: number,
+    talked?: boolean
   ): Promise<ProgressLog> {
     const id = customId || generateId();
     const createdAt = customCreatedAt || Date.now();
+    const isTalked = talked === undefined ? false : talked;
     const newLog: ProgressLog = {
       id,
       nodeId,
@@ -327,6 +331,7 @@ export const dbService = {
       struggle,
       discussion,
       createdAt,
+      talked: isTalked,
     };
 
     const mode = getStoragePreference();
@@ -339,6 +344,7 @@ export const dbService = {
           struggle,
           discussion,
           createdAt: new Date(createdAt),
+          talked: isTalked,
         });
         return newLog;
       } catch (err) {

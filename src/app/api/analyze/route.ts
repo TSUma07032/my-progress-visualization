@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 
 interface NodeItem {
   id: string;
@@ -18,46 +18,58 @@ export async function POST(request: Request) {
     }
 
     try {
-      // Initialize Gemini with the user-provided API Key
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.1-flash-lite",
         generationConfig: {
           responseMimeType: "application/json",
           responseSchema: {
-            type: "OBJECT",
+            type: SchemaType.OBJECT,
             properties: {
-              conclusion: {
-                type: "STRING",
-                description: "今週の成果や進捗を簡潔に要約（1〜2行）。",
-              },
-              struggle: {
-                type: "STRING",
-                description: "ユーザーの悩み、エラー、失敗談、疑問などを意図的に残した、綺麗に丸め込まない試行錯誤の要約。",
-              },
-              discussion: {
-                type: "STRING",
-                description: "報告相手（教授や上司）へ相談すべき具体的な問いの提案。",
-              },
-              nodeId: {
-                type: "STRING",
-                description: "提供された既存ノードリストの中で、入力内容が最も該当するノードのID。該当する既存ノードがない場合は null または空文字にしてください。",
-              },
-              newNodeLabel: {
-                type: "STRING",
-                description: "既存ノードに該当しない新規トピックだと判断した場合に、新しく作成するノードの表示名（例:『実験2：パラメータチューニング』）。新規作成しない場合は null または空文字にしてください。",
-              },
-              newNodeParentId: {
-                type: "STRING",
-                description: "新規ノードを作成する場合、その親となる既存ノードのID。ルートレベルに追加する場合は null または空文字にしてください。",
+              items: {
+                type: SchemaType.ARRAY,
+                description: "進捗や課題を個々のトピック（タスク・ノード）ごとに整理した進捗アイテムのリスト。ユーザーの入力メモの進捗量が非常に多い、または複数の異なるトピック（課題・ステップ・タスク）に言及していると判断した場合は、2つ以上の要素に分解して別々の進捗ログとして提案してください。",
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    conclusion: {
+                      type: SchemaType.STRING,
+                      description: "この進捗・トピックの成果や進捗を簡潔に要約（1〜2行）。",
+                    },
+                    struggle: {
+                      type: SchemaType.STRING,
+                      description: "このトピックにおける悩み、エラー、失敗談、疑問などを意図的に残した、綺麗に丸め込まない試行錯誤の要約。",
+                    },
+                    discussion: {
+                      type: SchemaType.STRING,
+                      description: "このトピックについて報告相手（教授や上司）へ相談すべき具体的な問いの提案。",
+                    },
+                    nodeId: {
+                      type: SchemaType.STRING,
+                      description: "提供された既存ノードリストの中で、この進捗内容が最も該当するノード of ID。該当する既存ノードがない場合は null または空文字にしてください。",
+                      nullable: true,
+                    },
+                    newNodeLabel: {
+                      type: SchemaType.STRING,
+                      description: "既存ノードに該当しない新規トピックだと判断した場合に、新しく作成するノードの表示名（例:『実験2：パラメータチューニング』）。新規作成しない場合は null または空文字にしてください。",
+                      nullable: true,
+                    },
+                    newNodeParentId: {
+                      type: SchemaType.STRING,
+                      description: "新規ノードを作成する場合、その親となる既存ノードのID。ルートレベルに追加する場合は null または空文字にしてください。",
+                      nullable: true,
+                    },
+                  },
+                  required: ["conclusion", "struggle", "discussion"],
+                },
               },
             },
-            required: ["conclusion", "struggle", "discussion"],
-          } as any,
+            required: ["items"],
+          },
         },
       });
 
-      const systemPrompt = `あなたは研究・プロジェクトの編集者です。ユーザーの入力メモから情報を抽出する際、文章を綺麗に要約して成功体験だけにするのは厳禁です。ユーザーが悩んでいること、試行錯誤したプロセス、目的とのズレに対する違和感などを『葛藤・議論のタネ』として絶対に省略せず、強調して抽出してください。`;
+      const systemPrompt = `あなたは研究・プロジェクトの編集者です。ユーザーの入力メモから情報を抽出する際、文章を綺麗に要約して成功体験だけにするのは厳禁です。ユーザーが悩んでいること、試行錯誤したプロセス、目的とのズレに対する違和感などを『葛藤・議論のタネ』として絶対に省略せず、強調して抽出してください。また、入力メモに複数のトピックや非常に多くの内容が含まれる場合は、それぞれを適切な「items」要素に分割して出力してください。`;
 
       const prompt = `
 ${systemPrompt}
@@ -70,37 +82,49 @@ ${JSON.stringify(nodes, null, 2)}
 ${rawMemo}
 ---
 
-上記メモを分析し、以下の指示に従ってJSONを出力してください:
-1. 「conclusion」: 成果や進捗を簡潔に1〜2行に要約。
-2. 「struggle」: ユーザーの葛藤やエラー、試行錯誤、失敗、悩みを意図的に残して要約。
-3. 「discussion」: 報告相手への相談に値する具体的な問いを提案。
-4. 「nodeId」, 「newNodeLabel」, 「newNodeParentId」:
-   - 入力メモの内容が、既存のどのノードに該当するか特定してください。
-   - もし完全に新しい話題や別のステップであると判断した場合は、「nodeId」を null (または空文字) とし、「newNodeLabel」に適切な新規ノードのラベルを設定し、「newNodeParentId」にその親となる既存ノードのID（無ければ null/空文字）を設定してください。
-   - もし何も判断できない場合は、新規に「未分類 (Uncategorized)」というラベルのノードを作成し、既存ノードのどれか（無ければRootやnull）を親にしてください。
+上記メモを分析し、指示に従ってJSON（itemsの配列を含むオブジェクト）を出力してください。
 `;
 
       const response = await model.generateContent({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
-      const text = response.response.text();
+      let text = response.response.text();
+      text = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
+
       const parsed = JSON.parse(text);
 
+      const items = (parsed.items || []).map((item: any) => ({
+        conclusion: item.conclusion || "",
+        struggle: item.struggle || "",
+        discussion: item.discussion || "",
+        nodeId: item.nodeId || null,
+        newNodeLabel: item.newNodeLabel || null,
+        newNodeParentId: item.newNodeParentId || null,
+      }));
+
+      // Fallback if array is empty
+      if (items.length === 0) {
+        items.push({
+          conclusion: "進捗要約の取得に失敗しました。",
+          struggle: "詳細な葛藤は抽出されませんでした。",
+          discussion: "進捗の報告方法について。",
+          nodeId: null,
+          newNodeLabel: "未分類 (Uncategorized)",
+          newNodeParentId: null,
+        });
+      }
+
       return NextResponse.json({
-        conclusion: parsed.conclusion || "",
-        struggle: parsed.struggle || "",
-        discussion: parsed.discussion || "",
-        nodeId: parsed.nodeId || null,
-        newNodeLabel: parsed.newNodeLabel || null,
-        newNodeParentId: parsed.newNodeParentId || null,
+        items,
         isSimulated: false,
       });
     } catch (apiError: any) {
-      console.error("Gemini API Error, falling back to simulation:", apiError);
-      // Return a simulated result with an indicator or return error.
-      // To satisfy requirement: "Gemini APIからの応答が失敗した場合、画面上にトースト通知を表示し再試行ボタンを提供する"
-      // We can return a 500 error status with json details so the UI can detect the failure.
+      console.error("====== Gemini API Error ======");
+      console.error("Status:", apiError?.status);
+      console.error("Message:", apiError?.message || apiError);
+      console.error("==============================");
+
       return NextResponse.json(
         {
           error: apiError?.message || "Gemini APIへのリクエストに失敗しました。",
@@ -115,70 +139,83 @@ ${rawMemo}
   }
 }
 
-// INTELLIGENT SIMULATION GENERATOR
+// INTELLIGENT SIMULATION GENERATOR (Can return 2 items if memo is long or has distinct sections)
 function generateSimulatedResponse(rawMemo: string, nodes: NodeItem[]) {
   const memoText = rawMemo || "";
+  const lines = memoText.split("\n").map(l => l.trim()).filter(l => l.length > 5);
 
-  // Analyze simple keywords to make simulation realistic
-  let conclusion = "今週の進捗メモをもとに要約を行いました。";
-  let struggle = "明確なエラーや葛藤は検知されませんでしたが、持続的な開発作業が行われています。";
-  let discussion = "今後のマイルストーンおよび優先順位について。";
+  // If the user pasted a lot of text or we have bullet points indicating multiple topics, split into 2 items
+  const shouldSplit = memoText.length > 150 || lines.filter(l => l.startsWith("-") || l.startsWith("*") || l.match(/^\d+\./)).length >= 2;
 
-  // Try to find struggle-related keywords
-  const struggleKeywords = ["エラー", "バグ", "難しい", "失敗", "課題", "悩", "葛藤", "苦戦", "できな", "遅れ", "わから", "バグ", "詰ま"];
-  const matchesStruggle = struggleKeywords.filter(kw => memoText.includes(kw));
+  const createItem = (textSource: string[], itemIndex: number) => {
+    let conclusion = `進捗メモから抽出されたテーマ ${itemIndex + 1} の要約。`;
+    let struggle = "明確なエラーや葛藤は検知されませんでしたが、開発作業が継続しています。";
+    let discussion = "今後のマイルストーンおよび優先順位について。";
 
-  if (matchesStruggle.length > 0) {
-    struggle = `「${matchesStruggle.slice(0, 3).join('」「')}」に関する葛藤や試行錯誤がメモから抽出されました。課題解決に向けて継続的な検証が行われています。`;
-  }
+    // Search keywords for struggle
+    const struggleKeywords = ["エラー", "バグ", "難しい", "失敗", "課題", "悩", "葛藤", "苦戦", "できな", "遅れ", "わから", "詰ま"];
+    const matchesStruggle = struggleKeywords.filter(kw => textSource.join(" ").includes(kw));
 
-  // Generate generic but relevant content based on memo length/content
-  const lines = memoText.split("\n").map(l => l.trim()).filter(l => l.length > 5 && !l.startsWith("#"));
-  if (lines.length > 0) {
-    conclusion = lines[0].replace(/[-*+]/, "").trim();
-    if (lines.length > 1) {
-      discussion = `メモに記載のある「${lines[lines.length - 1].replace(/[-*+]/, "").trim().substring(0, 40)}...」について、具体的な評価基準や進め方を相談すべきです。`;
+    if (matchesStruggle.length > 0) {
+      struggle = `テーマ ${itemIndex + 1} における「${matchesStruggle.slice(0, 3).join('環境要因と『苦戦』')}」についての葛藤や試行錯誤が抽出されました。`;
     }
-  }
 
-  // Determine Node Matching Simulation
-  let matchedNodeId: string | null = null;
-  let newNodeLabel: string | null = null;
-  let newNodeParentId: string | null = null;
-
-  if (nodes.length > 0) {
-    // Check if any node label is referenced in memo
-    const match = nodes.find(node => memoText.toLowerCase().includes(node.label.toLowerCase()) || node.label.split(/[:：]/).some(part => memoText.includes(part.trim())));
-    if (match) {
-      matchedNodeId = match.id;
-    } else {
-      // Propose new node with 30% probability or if specific new terms are used
-      if (memoText.length > 30) {
-        // Suggest a new node based on first few words of memo
-        const cleanWords = memoText.replace(/[#*`\-]/g, "").trim();
-        const shortName = cleanWords.split("\n")[0].substring(0, 15);
-        newNodeLabel = `展開：${shortName || "新規トピック"}`;
-        // Set parent to root if root exists
-        const rootNode = nodes.find(n => n.parentId === null) || nodes[0];
-        newNodeParentId = rootNode ? rootNode.id : null;
-      } else {
-        // Uncategorized fallback
-        newNodeLabel = "未分類 (Uncategorized)";
-        const rootNode = nodes.find(n => n.parentId === null) || nodes[0];
-        newNodeParentId = rootNode ? rootNode.id : null;
+    if (textSource.length > 0) {
+      conclusion = textSource[0].replace(/[-*+\d.]/, "").trim();
+      if (textSource.length > 1) {
+        discussion = `「${textSource[textSource.length - 1].replace(/[-*+\d.]/, "").trim().substring(0, 40)}...」に関して、具体的な進め方や評価方法を相談すべきです。`;
       }
     }
+
+    // Node placement simulation
+    let matchedNodeId: string | null = null;
+    let newNodeLabel: string | null = null;
+    let newNodeParentId: string | null = null;
+
+    if (nodes.length > 0) {
+      const sourceStr = textSource.join(" ").toLowerCase();
+      const match = nodes.find(node => sourceStr.includes(node.label.toLowerCase()) || node.label.split(/[:：]/).some(part => sourceStr.includes(part.trim().toLowerCase())));
+      if (match) {
+        matchedNodeId = match.id;
+      } else {
+        if (sourceStr.length > 20) {
+          const cleanText = textSource[0].replace(/[#*`\-\d.]/g, "").trim();
+          newNodeLabel = `展開：${cleanText.substring(0, 15) || "新規トピック"}`;
+          const rootNode = nodes.find(n => n.parentId === null) || nodes[0];
+          newNodeParentId = rootNode ? rootNode.id : null;
+        } else {
+          newNodeLabel = `追加検討：テーマ ${itemIndex + 1}`;
+          const rootNode = nodes.find(n => n.parentId === null) || nodes[0];
+          newNodeParentId = rootNode ? rootNode.id : null;
+        }
+      }
+    } else {
+      newNodeLabel = "未分類 (Uncategorized)";
+      newNodeParentId = null;
+    }
+
+    return {
+      conclusion,
+      struggle,
+      discussion,
+      nodeId: matchedNodeId,
+      newNodeLabel,
+      newNodeParentId,
+    };
+  };
+
+  const items = [];
+  if (shouldSplit && lines.length >= 2) {
+    const half = Math.ceil(lines.length / 2);
+    const linesPart1 = lines.slice(0, half);
+    const linesPart2 = lines.slice(half);
+    items.push(createItem(linesPart1, 0));
+    items.push(createItem(linesPart2, 1));
   } else {
-    newNodeLabel = "未分類 (Uncategorized)";
-    newNodeParentId = null;
+    items.push(createItem(lines, 0));
   }
 
   return {
-    conclusion,
-    struggle,
-    discussion,
-    nodeId: matchedNodeId,
-    newNodeLabel,
-    newNodeParentId,
+    items,
   };
 }
