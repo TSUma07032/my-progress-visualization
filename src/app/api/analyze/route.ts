@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai"; 
 
 interface NodeItem {
   id: string;
@@ -18,42 +18,44 @@ export async function POST(request: Request) {
     }
 
     try {
-      // Initialize Gemini with the user-provided API Key
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({
-        model: "gemini-2.5-flash",
+        model: "gemini-3.1-flash-lite", // 👇 修正: 確実なモデル名に変更
         generationConfig: {
           responseMimeType: "application/json",
           responseSchema: {
-            type: "OBJECT",
+            type: SchemaType.OBJECT, // 👇 修正: SchemaTypeを使用
             properties: {
               conclusion: {
-                type: "STRING",
+                type: SchemaType.STRING,
                 description: "今週の成果や進捗を簡潔に要約（1〜2行）。",
               },
               struggle: {
-                type: "STRING",
+                type: SchemaType.STRING,
                 description: "ユーザーの悩み、エラー、失敗談、疑問などを意図的に残した、綺麗に丸め込まない試行錯誤の要約。",
               },
               discussion: {
-                type: "STRING",
+                type: SchemaType.STRING,
                 description: "報告相手（教授や上司）へ相談すべき具体的な問いの提案。",
               },
               nodeId: {
-                type: "STRING",
+                type: SchemaType.STRING,
                 description: "提供された既存ノードリストの中で、入力内容が最も該当するノードのID。該当する既存ノードがない場合は null または空文字にしてください。",
+                nullable: true, // 👇 念のためnullを許容する設定を追加
               },
               newNodeLabel: {
-                type: "STRING",
+                type: SchemaType.STRING,
                 description: "既存ノードに該当しない新規トピックだと判断した場合に、新しく作成するノードの表示名（例:『実験2：パラメータチューニング』）。新規作成しない場合は null または空文字にしてください。",
+                nullable: true,
               },
               newNodeParentId: {
-                type: "STRING",
+                type: SchemaType.STRING,
                 description: "新規ノードを作成する場合、その親となる既存ノードのID。ルートレベルに追加する場合は null または空文字にしてください。",
+                nullable: true,
               },
             },
             required: ["conclusion", "struggle", "discussion"],
-          } as any,
+          },
         },
       });
 
@@ -84,7 +86,10 @@ ${rawMemo}
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
 
-      const text = response.response.text();
+      let text = response.response.text();
+      
+      text = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
+
       const parsed = JSON.parse(text);
 
       return NextResponse.json({
@@ -97,10 +102,12 @@ ${rawMemo}
         isSimulated: false,
       });
     } catch (apiError: any) {
-      console.error("Gemini API Error, falling back to simulation:", apiError);
-      // Return a simulated result with an indicator or return error.
-      // To satisfy requirement: "Gemini APIからの応答が失敗した場合、画面上にトースト通知を表示し再試行ボタンを提供する"
-      // We can return a 500 error status with json details so the UI can detect the failure.
+      // 開発時のデバッグ用に、コンソールに詳細なエラーメッセージを出す
+      console.error("====== Gemini API Error ======");
+      console.error("Status:", apiError?.status);
+      console.error("Message:", apiError?.message || apiError);
+      console.error("==============================");
+      
       return NextResponse.json(
         {
           error: apiError?.message || "Gemini APIへのリクエストに失敗しました。",

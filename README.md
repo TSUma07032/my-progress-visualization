@@ -34,3 +34,32 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+## LLMメモ
+
+音声生成　サポート対象外
+
+キャッシュ　サポート対象
+
+コード実行　サポート対象
+
+コンピュータ使用　サポート対象外
+
+ファイル検索　サポート対象
+
+関数呼び出し　サポート対象
+
+Google マップによるグラウンディング　サポート対象
+
+画像生成　サポート対象外
+
+Live API　サポート対象外
+
+検索によるグラウンディング　サポート対象
+
+構造化出力　サポート対象
+
+思考　サポート対象
+
+URL コンテキスト　サポート対象
