@@ -1,31 +1,28 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable react-hooks/exhaustive-deps */
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useApp } from "../context/AppContext";
 import { dbService } from "../lib/dbService";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Project, ProjectNode, ProgressLog } from "../lib/types";
 import ProjectMap from "../components/ProjectMap";
 import {
-  FileText,
+  Sparkles,
   Lock,
   Unlock,
   Settings,
-  Plus,
-  RefreshCw,
-  Database,
-  ArrowRight,
-  Sparkles,
-  AlertTriangle,
-  History,
-  Printer,
-  Edit2,
-  Trash2,
-  X,
-  PlusCircle,
-  HelpCircle,
   FolderPlus,
+  PlusCircle,
+  FileText,
+  Trash2,
+  Edit3,
+  Loader2,
+  AlertTriangle,
+  X,
+  Plus,
+  Printer,
+  RefreshCw,
 } from "lucide-react";
 
 export default function Home() {
@@ -46,26 +43,31 @@ export default function Home() {
   const [nodes, setNodes] = useState<ProjectNode[]>([]);
   const [logs, setLogs] = useState<ProgressLog[]>([]);
 
-  // Selected Node for History filtering
+  // Tab State: "add" (進捗追加), "tree" (進捗ツリー閲覧), "report" (今週の進捗報告資料)
+  const [activeTab, setActiveTab] = useState<"add" | "tree" | "report">("tree");
+
+  // Selected Node for Tree Detail view
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // Input & Edit States for Creator
+  // Raw Memo Input for Tab 1 (進捗追加)
   const [rawMemo, setRawMemo] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  // AI Output Override States
-  const [analyzedResult, setAnalyzedResult] = useState<{
+  // Split AI Proposed Results for Tab 1
+  const [analyzedItems, setAnalyzedItems] = useState<any[]>([]);
+  const [isResultSimulated, setIsResultSimulated] = useState(false);
+
+  // Checkboxes for Collective AI Summarizing in Tab 2
+  const [checkedLogIds, setCheckedLogIds] = useState<Set<string>>(new Set());
+  const [isCollectiveSummarizing, setIsCollectiveSummarizing] = useState(false);
+  const [collectiveSummaryResult, setCollectiveSummaryResult] = useState<{
     conclusion: string;
     struggle: string;
     discussion: string;
-    nodeId: string | null;
-    newNodeLabel: string | null;
-    newNodeParentId: string | null;
   } | null>(null);
-  const [isResultSimulated, setIsResultSimulated] = useState(false);
 
-  // UI Modals & Popups
+  // Modals & Inputs
   const [showPasscodeModal, setShowPasscodeModal] = useState(false);
   const [passcodeInput, setPasscodeInput] = useState("");
   const [passcodeError, setPasscodeError] = useState(false);
@@ -80,153 +82,329 @@ export default function Home() {
   const [newNodeLabelInput, setNewNodeLabelInput] = useState("");
   const [newNodeParentIdInput, setNewNodeParentIdInput] = useState<string | null>(null);
 
-  // Manual editing of log details (edit log in history list)
+  // Edit forms
+  const [nodeRenameInput, setNodeRenameInput] = useState("");
+  const [nodeNewParentId, setNodeNewParentId] = useState<string>("null");
+
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [editConclusion, setEditConclusion] = useState("");
   const [editStruggle, setEditStruggle] = useState("");
   const [editDiscussion, setEditDiscussion] = useState("");
 
-  // Loading indicator for fetching data
+  // System Loading / Toast
   const [isLoadingData, setIsLoadingData] = useState(true);
-
-  // Print Target for PDF Export
-  const [printLog, setPrintLog] = useState<ProgressLog | null>(null);
-
-  // Toast / notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Helper to trigger brief toast notifications
   const showToast = (msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
   };
 
-  // 1. Initial Load and Database Mode triggers
-  useEffect(() => {
-    if (!isMounted) return;
-    loadAllData();
-  }, [isMounted, storageMode]);
-
-  const loadAllData = async (targetProjId?: string) => {
+  // 1. DATA SYNCHRONIZATION
+  const loadProjects = async () => {
     setIsLoadingData(true);
     try {
-      const projList = await dbService.getProjects();
-      setProjects(projList);
-
-      if (projList.length > 0) {
-        // Select either the specified target, or the previously selected if still valid, or first
-        const active =
-          projList.find((p) => p.id === targetProjId) ||
-          projList.find((p) => p.id === selectedProject?.id) ||
-          projList[0];
-        setSelectedProject(active);
-
-        // Load nodes and logs
-        const nodeList = await dbService.getNodes(active.id);
-        const logList = await dbService.getLogs(active.id);
-
-        setNodes(nodeList);
-        setLogs(logList);
-
-        // Highlight root or default node if nothing is selected
-        const rootNode = nodeList.find((n) => n.parentId === null);
-        if (rootNode) {
-          setSelectedNodeId(rootNode.id);
-        } else if (nodeList.length > 0) {
-          setSelectedNodeId(nodeList[0].id);
+      const list = await dbService.getProjects();
+      setProjects(list);
+      if (list.length > 0) {
+        // Find if a project was already selected, or default to the first
+        const prevId = selectedProject?.id;
+        const exists = list.find((p) => p.id === prevId);
+        if (exists) {
+          setSelectedProject(exists);
         } else {
-          setSelectedNodeId(null);
+          setSelectedProject(list[0]);
         }
       } else {
         setSelectedProject(null);
-        setNodes([]);
-        setLogs([]);
-        setSelectedNodeId(null);
       }
     } catch (err) {
-      console.error("Error loading data", err);
-      showToast("データの読み込み中にエラーが発生しました。");
+      console.error(err);
     } finally {
       setIsLoadingData(false);
     }
   };
 
-  // Handle switching project
-  const handleSelectProject = async (proj: Project) => {
-    setSelectedProject(proj);
-    setIsLoadingData(true);
-    const nodeList = await dbService.getNodes(proj.id);
-    const logList = await dbService.getLogs(proj.id);
-    setNodes(nodeList);
-    setLogs(logList);
+  const loadProjectDetails = async (projId: string) => {
+    try {
+      const fetchedNodes = await dbService.getNodes(projId);
+      const fetchedLogs = await dbService.getLogs(projId);
+      setNodes(fetchedNodes);
+      setLogs(fetchedLogs);
 
-    const rootNode = nodeList.find((n) => n.parentId === null);
-    if (rootNode) {
-      setSelectedNodeId(rootNode.id);
-    } else if (nodeList.length > 0) {
-      setSelectedNodeId(nodeList[0].id);
+      // Select root node as default, or preserve selection if valid
+      if (fetchedNodes.length > 0) {
+        const root = fetchedNodes.find((n) => n.parentId === null) || fetchedNodes[0];
+        setSelectedNodeId((prevId) => {
+          const stillExists = fetchedNodes.some((n) => n.id === prevId);
+          return stillExists ? prevId : root.id;
+        });
+      } else {
+        setSelectedNodeId(null);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Trigger reload of projects list when storagePreference or mount status changes
+  useEffect(() => {
+    if (isMounted) {
+      loadProjects();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMounted, storageMode]);
+
+  // Trigger loading project elements when project selection changes
+  useEffect(() => {
+    if (selectedProject) {
+      loadProjectDetails(selectedProject.id);
+      setCheckedLogIds(new Set()); // Clear checkboxes
     } else {
+      setNodes([]);
+      setLogs([]);
       setSelectedNodeId(null);
+      setCheckedLogIds(new Set());
     }
-    setRawMemo("");
-    setAnalyzedResult(null);
-    setIsLoadingData(false);
-  };
+  }, [selectedProject]);
 
-  // 2. Creator passcode unlock
-  const handleUnlockSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const success = unlockCreator(passcodeInput);
-    if (success) {
-      setShowPasscodeModal(false);
-      setPasscodeInput("");
-      setPasscodeError(false);
-      showToast("資料作成者としてログインしました。");
+  // Synchronize renaming input field with selected node label
+  useEffect(() => {
+    if (selectedNodeId) {
+      const activeNode = nodes.find((n) => n.id === selectedNodeId);
+      if (activeNode) {
+        setNodeRenameInput(activeNode.label);
+        setNodeNewParentId(activeNode.parentId || "null");
+      }
     } else {
-      setPasscodeError(true);
+      setNodeRenameInput("");
+      setNodeNewParentId("null");
     }
-  };
+    setCheckedLogIds(new Set()); // Clear checked log checkboxes on node switch
+  }, [selectedNodeId, nodes]);
 
-  // 3. Project Creation
+  // Compute set of node IDs containing unreported logs (talked === false)
+  const unspokenNodeIds = useMemo(() => {
+    const set = new Set<string>();
+    logs.forEach((log) => {
+      if (log.talked === false || log.talked === undefined) {
+        set.add(log.nodeId);
+      }
+    });
+    return set;
+  }, [logs]);
+
+  // Filter logs for selected node in Tab 2
+  const selectedNodeLogs = useMemo(() => {
+    if (!selectedNodeId) return [];
+    return logs.filter((log) => log.nodeId === selectedNodeId);
+  }, [logs, selectedNodeId]);
+
+  // Get potential parent nodes (preventing circular hierarchy)
+  const potentialParents = useMemo(() => {
+    if (!selectedNodeId) return [];
+
+    // Helper to recursively get all children / descendants of a node ID
+    const getDescendants = (nodeId: string): Set<string> => {
+      const set = new Set<string>();
+      const recurse = (id: string) => {
+        nodes.forEach((n) => {
+          if (n.parentId === id) {
+            set.add(n.id);
+            recurse(n.id);
+          }
+        });
+      };
+      recurse(nodeId);
+      return set;
+    };
+
+    const descendants = getDescendants(selectedNodeId);
+    return nodes.filter(
+      (n) => n.id !== selectedNodeId && !descendants.has(n.id)
+    );
+  }, [nodes, selectedNodeId]);
+
+  // 2. PROJECT OPERATIONS
   const handleCreateProjectSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProjectTitle.trim()) return;
 
     try {
-      const newProj = await dbService.createProject(newProjectTitle.trim());
-      showToast(`プロジェクト「${newProj.title}」を作成しました。`);
-      setShowAddProjectModal(false);
+      const proj = await dbService.createProject(newProjectTitle.trim());
       setNewProjectTitle("");
-      await loadAllData(newProj.id);
+      setShowAddProjectModal(false);
+      showToast(`プロジェクト「${proj.title}」を作成しました。`);
+
+      // Reload projects list and force select the new one
+      const list = await dbService.getProjects();
+      setProjects(list);
+      const created = list.find((p) => p.id === proj.id);
+      if (created) {
+        setSelectedProject(created);
+      }
     } catch (err) {
-      console.error("Failed to create project", err);
-      showToast("プロジェクトの作成に失敗しました。");
+      console.error(err);
     }
   };
 
-  // 4. API Key setup
-  const handleSaveApiKey = (e: React.FormEvent) => {
+  // 3. NODE OPERATIONS
+  const handleAddChildNode = (parentId: string) => {
+    setNewNodeParentIdInput(parentId);
+    setNewNodeLabelInput("");
+    setShowAddNodeModal(true);
+  };
+
+  const handleAddNodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    saveGeminiApiKey(apiKeyInput.trim());
-    setShowKeyModal(false);
-    showToast("Gemini APIキーを保存しました。");
+    if (!selectedProject || !newNodeLabelInput.trim()) return;
+
+    try {
+      const node = await dbService.createNode(
+        selectedProject.id,
+        newNodeLabelInput.trim(),
+        newNodeParentIdInput
+      );
+      showToast(`ノード「${node.label}」をマップに追加しました。`);
+      setShowAddNodeModal(false);
+      await loadProjectDetails(selectedProject.id);
+      setSelectedNodeId(node.id);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
-  // 5. Trigger AI Analysis
+  const handleDeleteNode = async (nodeId: string) => {
+    if (!selectedProject) return;
+    try {
+      // Reparent children to the parent of this deleted node to prevent losing branches, or delete them
+      const targetNode = nodes.find((n) => n.id === nodeId);
+      const parentId = targetNode ? targetNode.parentId : null;
+
+      // Update immediate child nodes
+      const children = nodes.filter((n) => n.parentId === nodeId);
+      for (const child of children) {
+        await dbService.updateNode(selectedProject.id, child.id, { parentId });
+      }
+
+      // Delete the node
+      await dbService.deleteNode(selectedProject.id, nodeId);
+
+      // Re-map logs belonging to this node to "node-root" or nearest parent
+      const rootNode = nodes.find((n) => n.parentId === null) || nodes[0];
+      const fallbackNodeId = rootNode ? rootNode.id : "node-root";
+      const affectedLogs = logs.filter((log) => log.nodeId === nodeId);
+
+      for (const log of affectedLogs) {
+        await dbService.updateLog(selectedProject.id, log.id, { nodeId: fallbackNodeId });
+      }
+
+      showToast("ノードを削除し、配下の子ノードと進捗ログを再配置しました。");
+      await loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRenameNodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProject || !selectedNodeId || !nodeRenameInput.trim()) return;
+
+    try {
+      await dbService.updateNode(selectedProject.id, selectedNodeId, {
+        label: nodeRenameInput.trim(),
+      });
+      showToast("ノード名を変更しました。");
+      await loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleReparentNodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProject || !selectedNodeId) return;
+
+    const newParent = nodeNewParentId === "null" ? null : nodeNewParentId;
+    try {
+      await dbService.updateNode(selectedProject.id, selectedNodeId, {
+        parentId: newParent,
+      });
+      showToast("ノードの親子関係（マッピング構造）を変更しました。");
+      await loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 4. LOG & STATUS OPERATIONS
+  const handleToggleTalked = async (log: ProgressLog) => {
+    if (!selectedProject) return;
+    const nextStatus = !log.talked;
+    try {
+      await dbService.updateLog(selectedProject.id, log.id, { talked: nextStatus });
+      setLogs((prev) =>
+        prev.map((l) => (l.id === log.id ? { ...l, talked: nextStatus } : l))
+      );
+      showToast(
+        nextStatus
+          ? "「話済み（報告済み）」に設定しました。"
+          : "「まだ話していない（未報告）」に設定しました。"
+      );
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleLogDelete = async (logId: string) => {
+    if (!selectedProject) return;
+    if (confirm("この進捗ログを削除しますか？この操作は取り消せません。")) {
+      try {
+        await dbService.deleteLog(selectedProject.id, logId);
+        showToast("進捗ログを削除しました。");
+        await loadProjectDetails(selectedProject.id);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+
+  const handleLogEditStart = (log: ProgressLog) => {
+    setEditingLogId(log.id);
+    setEditConclusion(log.conclusion);
+    setEditStruggle(log.struggle);
+    setEditDiscussion(log.discussion);
+  };
+
+  const handleLogEditSubmit = async (e: React.FormEvent, logId: string) => {
+    e.preventDefault();
+    if (!selectedProject) return;
+
+    try {
+      await dbService.updateLog(selectedProject.id, logId, {
+        conclusion: editConclusion,
+        struggle: editStruggle,
+        discussion: editDiscussion,
+      });
+      setEditingLogId(null);
+      showToast("進捗ログの内容を更新しました。");
+      await loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 5. TAB 1: AI SPLIT MEMO ANALYZER
   const handleAIAnalyze = async () => {
-    if (!rawMemo.trim()) {
-      showToast("メモ内容を入力してください。");
-      return;
-    }
-    if (!selectedProject) {
-      showToast("プロジェクトを選択、または新規作成してください。");
-      return;
-    }
+    if (!rawMemo.trim() || !selectedProject) return;
 
     setIsAnalyzing(true);
     setApiError(null);
-    setAnalyzedResult(null);
+    setAnalyzedItems([]);
 
-    // Prepare current node simplified mapping context to pass to Gemini
     const simpleNodes = nodes.map((n) => ({
       id: n.id,
       label: n.label,
@@ -243,931 +421,1318 @@ export default function Home() {
           rawMemo,
           nodes: simpleNodes,
           apiKey: geminiApiKey,
-          useSimulation: !geminiApiKey, // auto-simulate if no key
+          useSimulation: !geminiApiKey,
         }),
       });
 
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.message || errData.error || "AI解析サーバーでエラーが発生しました。");
+        throw new Error(errData.message || errData.error || "AI解析中にエラーが発生しました。");
       }
 
       const data = await response.json();
-      setAnalyzedResult({
-        conclusion: data.conclusion,
-        struggle: data.struggle,
-        discussion: data.discussion,
-        nodeId: data.nodeId,
-        newNodeLabel: data.newNodeLabel,
-        newNodeParentId: data.newNodeParentId,
-      });
-      setIsResultSimulated(data.isSimulated);
-      showToast(data.isSimulated ? "シミュレーション結果を生成しました。" : "AIによる思考分析が完了しました！");
+
+      // We expect an array under the 'items' key
+      if (data.items && Array.isArray(data.items)) {
+        // Hydrate default values for mapping
+        const hydrated = data.items.map((item: any, idx: number) => {
+          const defaultNodeId = item.nodeId && nodes.some((n) => n.id === item.nodeId) ? item.nodeId : "";
+          const mappingType = defaultNodeId ? "existing" : "new";
+          return {
+            id: `temp-item-${idx}-${Date.now()}`,
+            conclusion: item.conclusion || "",
+            struggle: item.struggle || "",
+            discussion: item.discussion || "",
+            mappingType, // "existing" or "new"
+            nodeId: defaultNodeId || (nodes.length > 0 ? nodes[0].id : ""),
+            newNodeLabel: item.newNodeLabel || `展開：新進捗テーマ-${idx + 1}`,
+            newNodeParentId: item.newNodeParentId && nodes.some((n) => n.id === item.newNodeParentId)
+              ? item.newNodeParentId
+              : (nodes.length > 0 ? nodes[0].id : "node-root"),
+          };
+        });
+        setAnalyzedItems(hydrated);
+        setIsResultSimulated(!!data.isSimulated);
+        showToast(
+          data.isSimulated
+            ? "AIシミュレーションによる分割解析が完了しました。"
+            : `Geminiがメモを ${hydrated.length} つのトピックに分割・構造化しました！`
+        );
+      } else {
+        throw new Error("APIレスポンスの構造に互換性がありません。");
+      }
     } catch (err: any) {
-      console.error("Analysis failed", err);
-      setApiError(err.message || "通信エラーが発生しました。");
+      console.error(err);
+      setApiError(err.message || "接続エラーが発生しました。");
     } finally {
       setIsAnalyzing(false);
     }
   };
 
-  // 6. Save Progress Log to Database
-  const handleSaveProgressLog = async () => {
-    if (!selectedProject || !analyzedResult) return;
-
-    let targetNodeId = analyzedResult.nodeId;
+  // Register multiple split items into the DB
+  const handleSaveAllAnalyzedItems = async () => {
+    if (!selectedProject || analyzedItems.length === 0) return;
 
     try {
-      // Check if we need to auto-generate a new node
-      if (!targetNodeId && analyzedResult.newNodeLabel) {
-        const createdNode = await dbService.createNode(
-          selectedProject.id,
-          analyzedResult.newNodeLabel,
-          analyzedResult.newNodeParentId
-        );
-        targetNodeId = createdNode.id;
-        showToast(`新規ノード「${createdNode.label}」を自動追加しました。`);
-      }
+      setIsAnalyzing(true);
+      for (const item of analyzedItems) {
+        let finalNodeId = item.nodeId;
 
-      // If still no node ID, map to Uncategorized or Root
-      if (!targetNodeId) {
-        const existingUncat = nodes.find((n) => n.label.includes("未分類") || n.id === "uncat");
-        if (existingUncat) {
-          targetNodeId = existingUncat.id;
-        } else {
-          const rootNode = nodes.find((n) => n.parentId === null) || nodes[0];
-          const uncatNode = await dbService.createNode(
+        // Create new node if mapping type is "new"
+        if (item.mappingType === "new" && item.newNodeLabel.trim()) {
+          const parentId = item.newNodeParentId === "node-root" || !item.newNodeParentId ? null : item.newNodeParentId;
+          const createdNode = await dbService.createNode(
             selectedProject.id,
-            "未分類 (Uncategorized)",
-            rootNode ? rootNode.id : null
+            item.newNodeLabel.trim(),
+            parentId
           );
-          targetNodeId = uncatNode.id;
+          finalNodeId = createdNode.id;
         }
+
+        // Save progress log
+        await dbService.createLog(
+          selectedProject.id,
+          finalNodeId || (nodes.length > 0 ? nodes[0].id : "node-root"),
+          rawMemo,
+          item.conclusion,
+          item.struggle,
+          item.discussion,
+          undefined,
+          undefined,
+          false // default: unmarked as talked (unreported)
+        );
       }
 
-      // Register the Progress Log
-      await dbService.createLog(
-        selectedProject.id,
-        targetNodeId,
-        rawMemo,
-        analyzedResult.conclusion,
-        analyzedResult.struggle,
-        analyzedResult.discussion
-      );
-
-      // Refresh data
-      const updatedNodes = await dbService.getNodes(selectedProject.id);
-      const updatedLogs = await dbService.getLogs(selectedProject.id);
-      setNodes(updatedNodes);
-      setLogs(updatedLogs);
-
-      // Select and highlight this node
-      setSelectedNodeId(targetNodeId);
-
-      // Reset Form state
+      showToast(`${analyzedItems.length} 件の進捗ログをツリーマップにマッピング・登録しました！`);
+      setAnalyzedItems([]);
       setRawMemo("");
-      setAnalyzedResult(null);
-      showToast("進捗ログをマップと履歴に保存しました！");
+      await loadProjectDetails(selectedProject.id);
+
+      // Automatically switch to Tree view so they can see their new nodes/logs!
+      setActiveTab("tree");
     } catch (err) {
-      console.error("Failed to save progress", err);
-      showToast("進捗ログの保存に失敗しました。");
+      console.error(err);
+      alert("保存中にエラーが発生しました。");
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
-  // 7. Node Operations: Manual add & delete
-  const handleAddChildNodeClick = (parentId: string) => {
-    setNewNodeParentIdInput(parentId);
-    setNewNodeLabelInput("");
-    setShowAddNodeModal(true);
+  const handleUpdateAnalyzedItemField = (itemId: string, field: string, value: any) => {
+    setAnalyzedItems((prev) =>
+      prev.map((item) => (item.id === itemId ? { ...item, [field]: value } : item))
+    );
   };
 
-  const handleAddNodeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedProject || !newNodeLabelInput.trim()) return;
-
-    try {
-      const created = await dbService.createNode(
-        selectedProject.id,
-        newNodeLabelInput.trim(),
-        newNodeParentIdInput
-      );
-      showToast(`ノード「${created.label}」を追加しました。`);
-      setShowAddNodeModal(false);
-
-      const nodeList = await dbService.getNodes(selectedProject.id);
-      setNodes(nodeList);
-      setSelectedNodeId(created.id);
-    } catch (err) {
-      console.error("Add node failed", err);
-      showToast("ノードの追加に失敗しました。");
-    }
+  const handleDeleteAnalyzedItem = (itemId: string) => {
+    setAnalyzedItems((prev) => prev.filter((item) => item.id !== itemId));
   };
 
-  const handleDeleteNode = async (nodeId: string) => {
-    if (!selectedProject) return;
-
-    try {
-      await dbService.deleteNode(selectedProject.id, nodeId);
-      showToast("ノードを削除しました。");
-
-      const nodeList = await dbService.getNodes(selectedProject.id);
-      setNodes(nodeList);
-      if (selectedNodeId === nodeId) {
-        setSelectedNodeId(nodeList[0]?.id || null);
+  // 6. MULTI-SELECT COLLECTIVE SUMMARIZATION (TAB 2)
+  const handleToggleSelectLog = (logId: string) => {
+    setCheckedLogIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
       }
-    } catch (err) {
-      console.error("Delete node failed", err);
-      showToast("ノードの削除に失敗しました。");
-    }
+      return next;
+    });
   };
 
-  // 8. History Log Operations: Edit & Delete
-  const startEditingLog = (log: ProgressLog) => {
-    setEditingLogId(log.id);
-    setEditConclusion(log.conclusion);
-    setEditStruggle(log.struggle);
-    setEditDiscussion(log.discussion);
-  };
+  const handleCollectiveSummarySubmit = async () => {
+    if (!selectedProject || checkedLogIds.size < 2) return;
 
-  const saveEditedLog = async (logId: string) => {
-    if (!selectedProject) return;
+    setIsCollectiveSummarizing(true);
+    setCollectiveSummaryResult(null);
+
+    const logsToSummarize = logs.filter((l) => checkedLogIds.has(l.id));
+    const combinedMemos = logsToSummarize
+      .map((l, idx) => `[進捗ログ ${idx + 1}]\n結論：${l.conclusion}\n葛藤：${l.struggle}\n相談事項：${l.discussion}`)
+      .join("\n\n---\n\n");
 
     try {
-      await dbService.updateLog(selectedProject.id, logId, {
-        conclusion: editConclusion,
-        struggle: editStruggle,
-        discussion: editDiscussion,
+      if (!geminiApiKey) {
+        // Fallback simulation for merging summaries
+        setTimeout(() => {
+          const combinedConclusion = `【一括要約】選ばれた ${logsToSummarize.length} 件の進捗の成果を統合：\n` + logsToSummarize.map(l => l.conclusion).join(" / ");
+          const combinedStruggle = `選ばれた進捗に共通するエラー・課題：\n` + logsToSummarize.map(l => l.struggle).join("\n");
+          const combinedDiscussion = `統括的な議論テーマの提案：\n` + logsToSummarize.map(l => l.discussion).join("\n");
+          setCollectiveSummaryResult({
+            conclusion: combinedConclusion,
+            struggle: combinedStruggle,
+            discussion: combinedDiscussion,
+          });
+          setIsCollectiveSummarizing(false);
+        }, 1200);
+        return;
+      }
+
+      // Real Gemini API merger
+      const prompt = `
+あなたはプロジェクトの進行をまとめる統括者です。
+ユーザーが選択した複数の進捗ログがあります。これらを重複をなくし、かつ葛藤や相談すべきテーマなどの「綺麗に丸めない試行錯誤」のディテールを損なうことなく、1つの代表的な要約にマージしてください。
+
+マージ元の進捗一覧:
+${combinedMemos}
+
+必ず以下のJSONスキーマに従った単一のオブジェクトのみを出力してください。
+JSONスキーマ:
+{
+  "conclusion": "成果や結論を1〜3行にまとめた文章",
+  "struggle": "直面した悩み、葛藤、バグ、問題点の詳細をまとめた文章（省略せず綺麗にまとめすぎないようにしてください）",
+  "discussion": "統括的に報告相手へ質問・相談すべき相談事項の提案"
+}
+`;
+
+      const genAI = new GoogleGenerativeAI(geminiApiKey);
+      const model = genAI.getGenerativeModel({
+        model: "gemini-3.1-flash-lite",
+        generationConfig: { responseMimeType: "application/json" },
       });
-      showToast("ログを更新しました。");
-      setEditingLogId(null);
 
-      const logList = await dbService.getLogs(selectedProject.id);
-      setLogs(logList);
-    } catch (err) {
-      console.error("Update log failed", err);
-      showToast("ログの更新に失敗しました。");
+      const response = await model.generateContent(prompt);
+      let text = response.response.text();
+      text = text.replace(/```json/gi, '').replace(/```/gi, '').trim();
+
+      const parsed = JSON.parse(text);
+      setCollectiveSummaryResult({
+        conclusion: parsed.conclusion || "要約の生成に失敗しました。",
+        struggle: parsed.struggle || "葛藤の生成に失敗しました。",
+        discussion: parsed.discussion || "相談事項の生成に失敗しました。",
+      });
+    } catch (err: any) {
+      console.error(err);
+      alert(`一括要約の生成に失敗しました: ${err.message || err}`);
+    } finally {
+      setIsCollectiveSummarizing(false);
     }
   };
 
-  const deleteLog = async (logId: string) => {
-    if (!selectedProject) return;
-    if (!confirm("この進捗ログを削除しますか？")) return;
+  // 7. TAB 3: WEEKLY REPORT (UNREPORTED LOGS FILTER)
+  const unreportedLogsByNode = useMemo(() => {
+    const unrep = logs.filter((log) => log.talked === false || log.talked === undefined);
 
-    try {
-      await dbService.deleteLog(selectedProject.id, logId);
-      showToast("ログを削除しました。");
+    // Group by node ID
+    const grouped: Record<string, { nodeLabel: string; logs: ProgressLog[] }> = {};
+    unrep.forEach((log) => {
+      const node = nodes.find((n) => n.id === log.nodeId);
+      const label = node ? node.label : "未分類の進捗";
+      if (!grouped[log.nodeId]) {
+        grouped[log.nodeId] = { nodeLabel: label, logs: [] };
+      }
+      grouped[log.nodeId].logs.push(log);
+    });
 
-      const logList = await dbService.getLogs(selectedProject.id);
-      setLogs(logList);
-    } catch (err) {
-      console.error("Delete log failed", err);
-      showToast("ログの削除に失敗しました。");
+    return Object.values(grouped);
+  }, [logs, nodes]);
+
+  // Handle saving credentials
+  const handleSaveApiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveGeminiApiKey(apiKeyInput.trim());
+    setShowKeyModal(false);
+    showToast(
+      apiKeyInput.trim()
+        ? "Gemini APIキーをブラウザに保存しました。高精度なAI解析が利用可能です！"
+        : "APIキーをクリアしました。AIシミュレーションモードが有効です。"
+    );
+  };
+
+  const handlePasscodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const success = unlockCreator(passcodeInput);
+    if (success) {
+      setShowPasscodeModal(false);
+      setPasscodeError(false);
+      showToast("管理者（資料作成者）モードを解除しました。進捗追加や編集が可能です。");
+    } else {
+      setPasscodeError(true);
     }
   };
 
-  // 9. Printing logic
-  const handlePrintLog = (log: ProgressLog) => {
-    setPrintLog(log);
-    setTimeout(() => {
-      window.print();
-    }, 150);
-  };
-
-  // Compute stats and active items
-  const activeNode = nodes.find((n) => n.id === selectedNodeId);
-  const activeNodeLogs = logs.filter((l) => l.nodeId === selectedNodeId);
-  const latestLog = logs.length > 0 ? logs[0] : null;
-
-  // Render Loader if not fully mounted yet
   if (!isMounted) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-slate-500 gap-2">
-        <RefreshCw className="animate-spin w-5 h-5" />
-        <span>システムを初期化中...</span>
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+        <span className="text-xs text-slate-500 font-semibold">システムをロード中...</span>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen">
-      {/* 1. TOP HEADER BAR */}
-      <header className="no-print bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40 shadow-sm flex flex-wrap items-center justify-between gap-4">
-        {/* Title */}
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-tr from-emerald-500 to-teal-600 text-white p-2.5 rounded-xl shadow-md">
-            <FileText className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-lg font-black tracking-tight bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent">
-              マップ型 思考ログ構築システム
-            </h1>
-            <p className="text-[10px] text-slate-500 font-medium">
-              AI-driven Progress Tracking & Struggle Capture
-            </p>
-          </div>
-        </div>
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16 relative">
+      {/* 1. HEADER (NO-PRINT) */}
+      <header className="no-print bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm px-4 lg:px-8 py-3.5">
+        <div className="max-w-[1500px] mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
 
-        {/* Database & Key Configuration Controls */}
-        <div className="flex items-center flex-wrap gap-2.5">
-          {/* Storage Switcher */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-1 text-xs border border-slate-200">
-            <button
-              onClick={() => setStorageMode("mock")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition ${
-                storageMode === "mock"
-                  ? "bg-white text-blue-600 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="データをブラウザにローカル保存して検証します"
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>モックモード</span>
-            </button>
-            <button
-              onClick={() => setStorageMode("firebase")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition ${
-                storageMode === "firebase"
-                  ? "bg-white text-emerald-600 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              title="Firebase Firestoreと本番接続します"
-            >
-              <Database className="w-3.5 h-3.5" />
-              <span>Firebase</span>
-            </button>
+          {/* Logo & Project Picker */}
+          <div className="flex items-center gap-4 flex-1">
+            <div className="flex items-center gap-2">
+              <div className="bg-gradient-to-tr from-emerald-500 to-teal-600 text-white p-2 rounded-xl shadow-md">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div>
+                <h1 className="text-sm font-black text-slate-900 tracking-tight leading-none">
+                  マップ型 思考ログ構築システム
+                </h1>
+                <span className="text-[10px] text-slate-400 font-medium">
+                  Al-driven Progress Tracking & Struggle Capture
+                </span>
+              </div>
+            </div>
+
+            <div className="h-6 w-px bg-slate-200 hidden md:block" />
+
+            {/* Project dropdown selector */}
+            <div className="flex items-center gap-2 flex-1 max-w-sm">
+              <span className="text-[11px] font-bold text-slate-400 shrink-0 hidden sm:inline">
+                選択中のプロジェクト:
+              </span>
+              {projects.length > 0 ? (
+                <select
+                  value={selectedProject?.id || ""}
+                  onChange={(e) => {
+                    const found = projects.find((p) => p.id === e.target.value);
+                    if (found) setSelectedProject(found);
+                  }}
+                  className="bg-slate-100 hover:bg-slate-200/80 border-none rounded-lg text-xs font-black text-slate-700 px-3 py-1.5 focus:ring-2 focus:ring-emerald-500 cursor-pointer max-w-full"
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.title}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-xs text-red-500 font-bold">プロジェクトがありません</span>
+              )}
+
+              {isCreator && (
+                <button
+                  onClick={() => {
+                    setNewProjectTitle("");
+                    setShowAddProjectModal(true);
+                  }}
+                  className="bg-emerald-50 hover:bg-emerald-100 text-emerald-600 rounded-lg p-1.5 transition"
+                  title="新規プロジェクトを作成"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Gemini API Key config button */}
-          <button
-            onClick={() => {
-              setApiKeyInput(geminiApiKey);
-              setShowKeyModal(true);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold border transition ${
-              geminiApiKey
-                ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-                : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>{geminiApiKey ? "Gemini 連携中" : "Gemini APIキーを設定"}</span>
-          </button>
+          {/* Configuration toolbar */}
+          <div className="flex items-center gap-2 self-end md:self-auto">
 
-          {/* Creator Role Lock / Unlock Toggle */}
-          {isCreator ? (
-            <button
-              onClick={lockCreator}
-              className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 px-3 py-2 rounded-lg text-xs font-semibold transition"
-              title="編集ロック（閲覧モードへ戻る）"
-            >
-              <Lock className="w-4 h-4" />
-              <span>資料作成者（ログイン中）</span>
-            </button>
-          ) : (
+            {/* Storage preferences switch */}
+            <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border">
+              <button
+                onClick={() => setStorageMode("mock")}
+                className={`text-[10px] font-bold px-2 py-1 rounded transition-all duration-150 ${
+                  storageMode === "mock"
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                モックモード
+              </button>
+              <button
+                onClick={() => setStorageMode("firebase")}
+                className={`text-[10px] font-bold px-2 py-1 rounded transition-all duration-150 ${
+                  storageMode === "firebase"
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Firebase
+              </button>
+            </div>
+
+            {/* Gemini API key configuration */}
             <button
               onClick={() => {
-                setPasscodeInput("");
-                setShowPasscodeModal(true);
+                setApiKeyInput(geminiApiKey);
+                setShowKeyModal(true);
               }}
-              className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 rounded-lg text-xs font-semibold transition shadow-sm"
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                geminiApiKey
+                  ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                  : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
+              }`}
             >
-              <Unlock className="w-4 h-4" />
-              <span>資料作成者としてロック解除</span>
+              <Settings className="w-3.5 h-3.5 text-amber-500" />
+              <span>{geminiApiKey ? "Gemini APIキー設定済" : "Gemini APIキーを設定"}</span>
             </button>
-          )}
+
+            {/* Role locking toggle */}
+            {isCreator ? (
+              <button
+                onClick={lockCreator}
+                className="flex items-center gap-1.5 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-sm"
+                title="編集をロック"
+              >
+                <Lock className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
+                <span className="hidden sm:inline">資料作成者（ログイン中）</span>
+                <span className="sm:hidden">作成者</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setPasscodeInput("");
+                  setShowPasscodeModal(true);
+                }}
+                className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition shadow"
+              >
+                <Unlock className="w-3.5 h-3.5 text-slate-300" />
+                <span>資料作成者（ログイン）</span>
+              </button>
+            )}
+          </div>
+
         </div>
       </header>
 
-      {/* 2. SUB-HEADER FOR PROJECT SELECTION */}
-      <section className="no-print bg-slate-100 border-b border-slate-200 px-6 py-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">選択中のプロジェクト:</span>
-          {projects.length > 0 && selectedProject ? (
-            <div className="relative inline-block">
-              <select
-                value={selectedProject.id}
-                onChange={(e) => {
-                  const target = projects.find((p) => p.id === e.target.value);
-                  if (target) handleSelectProject(target);
-                }}
-                className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 pr-8 appearance-none cursor-pointer"
-              >
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.title}
-                  </option>
-                ))}
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
-                </svg>
-              </div>
-            </div>
-          ) : (
-            <span className="text-xs text-slate-400">プロジェクトがありません。</span>
-          )}
-
-          {isCreator && (
+      {/* 2. TAB SWITCH NAVIGATION (NO-PRINT) */}
+      <div className="no-print bg-slate-100 border-b border-slate-200 py-2">
+        <div className="max-w-[1500px] mx-auto px-4 lg:px-8 flex items-center justify-between">
+          <div className="flex gap-1">
             <button
-              onClick={() => setShowAddProjectModal(true)}
-              className="flex items-center gap-1 text-xs font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 px-2 py-1.5 rounded-lg transition"
+              onClick={() => setActiveTab("add")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
+                activeTab === "add"
+                  ? "bg-emerald-600 text-white shadow-md"
+                  : "bg-transparent text-slate-500 hover:bg-slate-200/60"
+              }`}
             >
-              <Plus className="w-3.5 h-3.5" />
-              <span>新規プロジェクト</span>
+              <PlusCircle className="w-4 h-4" />
+              <span>① 進捗追加システム</span>
+              {!isCreator && <Lock className="w-3 h-3 text-slate-400 shrink-0" />}
             </button>
-          )}
-        </div>
 
-        <div className="flex items-center gap-3 text-xs text-slate-500">
-          <span>保存場所:</span>
-          <span className={`font-semibold ${storageMode === "firebase" ? "text-emerald-600" : "text-blue-600"}`}>
-            {storageMode === "firebase" ? "Firebase Firestore" : "ブラウザ LocalStorage"}
-          </span>
-        </div>
-      </section>
+            <button
+              onClick={() => setActiveTab("tree")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
+                activeTab === "tree"
+                  ? "bg-emerald-600 text-white shadow-md"
+                  : "bg-transparent text-slate-500 hover:bg-slate-200/60"
+              }`}
+            >
+              <RefreshCw className="w-4 h-4 animate-spin-slow" />
+              <span>② 進捗ツリー閲覧システム</span>
+            </button>
 
-      {/* 3. MAIN WORKSPACE AREA */}
-      <main className="no-print flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 p-6 overflow-hidden">
-        {/* LEFT COLUMN: MEMO INPUT / CURRENT PROGRESS PANEL (WIDTH 5 ON LG) */}
-        <div className="lg:col-span-5 flex flex-col gap-6 max-h-[calc(100vh-180px)] overflow-y-auto pr-1">
-          {isCreator ? (
-            /* CREATOR VIEW: MEMO INPUT & AI WORKSPACE */
-            <div className="bg-white rounded-xl shadow-md border border-slate-200 p-5 space-y-5 flex flex-col">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="text-emerald-500 w-5 h-5" />
-                  <h3 className="font-bold text-slate-800 text-sm">今週の進捗メモ入力</h3>
-                </div>
-                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  AI解析ツール
+            <button
+              onClick={() => setActiveTab("report")}
+              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-black transition-all ${
+                activeTab === "report"
+                  ? "bg-emerald-600 text-white shadow-md"
+                  : "bg-transparent text-slate-500 hover:bg-slate-200/60"
+              }`}
+            >
+              <Printer className="w-4 h-4" />
+              <span>③ 今週の進捗報告資料</span>
+              {unreportedLogsByNode.length > 0 && (
+                <span className="bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
+                  {unreportedLogsByNode.reduce((sum, item) => sum + item.logs.length, 0)}
                 </span>
-              </div>
-
-              {/* Textarea for raw memo */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-bold text-slate-600">
-                  日々の活動・試行錯誤メモ (Notion等からの貼り付けもOK):
-                </label>
-                <textarea
-                  value={rawMemo}
-                  onChange={(e) => setRawMemo(e.target.value)}
-                  placeholder="例：今週はReact Flowを用いた可視化UIの実装を進めた。ノードにカーソルを合わせた時のメニュー表示の挙動でバグが発生し、削除ボタンが押せないバグに半日詰まって苦戦した。CSSのz-index設定を調整し、イベント伝播（stopPropagation）を追加することで解決できた。来週はこれに紐づく過去ログ履歴の表示機能を仕上げたい。"
-                  rows={8}
-                  className="w-full text-sm border border-slate-200 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 placeholder-slate-400"
-                />
-              </div>
-
-              {/* API Key warnings and simulation notes */}
-              {!geminiApiKey && (
-                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2 text-xs text-amber-800">
-                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <p className="font-bold">Gemini APIキーが設定されていません</p>
-                    <p className="text-[11px] text-amber-700 leading-relaxed">
-                      APIキーがない場合、**AIシミュレーション機能（ローカル擬似解析）**が自動的に働きます。実機でGeminiによる高精度な葛藤抽出を行いたい場合は、右上のボタンからAPIキーを設定してください。
-                    </p>
-                  </div>
-                </div>
               )}
+            </button>
+          </div>
 
-              {/* Trigger analyze button */}
-              <div className="flex gap-2">
-                <button
-                  onClick={handleAIAnalyze}
-                  disabled={isAnalyzing}
-                  className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:from-slate-400 disabled:to-slate-500 text-white font-bold text-sm py-2.5 px-4 rounded-xl shadow transition flex items-center justify-center gap-2"
-                >
-                  {isAnalyzing ? (
-                    <>
-                      <RefreshCw className="animate-spin w-4 h-4" />
-                      <span>AI解析整理中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4" />
-                      <span>{geminiApiKey ? "AIに進捗メモを分析させる" : "シミュレーション解析を実行"}</span>
-                    </>
-                  )}
-                </button>
-              </div>
+          <div className="text-[11px] font-bold text-slate-400">
+            {storageMode === "firebase" ? "📡 Firebase同期接続中" : "💾 ブラウザのLocalStorageに保存中"}
+          </div>
+        </div>
+      </div>
 
-              {/* API Error Notification */}
-              {apiError && (
-                <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-3 text-xs space-y-2">
-                  <div className="flex items-center gap-1.5 font-bold">
-                    <AlertTriangle className="w-4 h-4 text-red-500" />
-                    <span>AIによる整理に失敗しました</span>
-                  </div>
-                  <p className="text-red-600 leading-relaxed text-[11px]">{apiError}</p>
-                  <button
-                    onClick={handleAIAnalyze}
-                    className="bg-red-100 hover:bg-red-200 text-red-800 font-bold px-2 py-1 rounded transition text-[10px]"
-                  >
-                    再試行
-                  </button>
-                </div>
-              )}
-
-              {/* Interactive Analyzed Results / Overrides */}
-              {analyzedResult && (
-                <div className="border border-slate-200 bg-slate-50/50 rounded-xl p-4 space-y-4 shadow-sm animate-fadeIn">
-                  {/* Mode / Simulation Warning */}
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1">
-                      💡 解析抽出結果（手動編集・修正可能）:
-                    </span>
-                    {isResultSimulated ? (
-                      <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-2 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
-                        <AlertTriangle className="w-2.5 h-2.5" />
-                        AIシミュレーション実行中
-                      </span>
-                    ) : (
-                      <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-2 py-0.5 rounded-full border border-emerald-200">
-                        Gemini AI 解析
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 1. Conclusion */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-black text-emerald-800 uppercase tracking-wider">
-                      1. 結論・進捗の要約:
-                    </label>
-                    <textarea
-                      value={analyzedResult.conclusion}
-                      onChange={(e) =>
-                        setAnalyzedResult({ ...analyzedResult, conclusion: e.target.value })
-                      }
-                      rows={2}
-                      className="w-full text-xs bg-white border border-slate-200 rounded p-2 focus:ring-1 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  {/* 2. Struggle */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-black text-amber-800 uppercase tracking-wider">
-                      2. 葛藤・試行錯誤（本音、省略せず残す箇所）:
-                    </label>
-                    <textarea
-                      value={analyzedResult.struggle}
-                      onChange={(e) =>
-                        setAnalyzedResult({ ...analyzedResult, struggle: e.target.value })
-                      }
-                      rows={3}
-                      className="w-full text-xs bg-white border border-slate-200 rounded p-2 focus:ring-1 focus:ring-amber-500"
-                    />
-                  </div>
-
-                  {/* 3. Discussion */}
-                  <div className="space-y-1">
-                    <label className="block text-[11px] font-black text-indigo-800 uppercase tracking-wider">
-                      3. 相談・議論ポイント:
-                    </label>
-                    <textarea
-                      value={analyzedResult.discussion}
-                      onChange={(e) =>
-                        setAnalyzedResult({ ...analyzedResult, discussion: e.target.value })
-                      }
-                      rows={2}
-                      className="w-full text-xs bg-white border border-slate-200 rounded p-2 focus:ring-1 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  {/* 4. Mapping location */}
-                  <div className="space-y-1 bg-white p-2 rounded border border-slate-200">
-                    <label className="block text-[11px] font-black text-slate-700">
-                      4. マップ上の現在地（紐付けノード）:
-                    </label>
-
-                    {analyzedResult.nodeId ? (
-                      <div className="space-y-2">
-                        <select
-                          value={analyzedResult.nodeId}
-                          onChange={(e) =>
-                            setAnalyzedResult({
-                              ...analyzedResult,
-                              nodeId: e.target.value,
-                              newNodeLabel: null,
-                            })
-                          }
-                          className="w-full text-xs border border-slate-200 rounded p-1.5 bg-slate-50 font-medium"
-                        >
-                          {nodes.map((n) => (
-                            <option key={n.id} value={n.id}>
-                              {n.label}
-                            </option>
-                          ))}
-                          <option value="">-- 新しい子ノードを自動生成する --</option>
-                        </select>
-                      </div>
-                    ) : (
-                      <div className="space-y-2 text-xs">
-                        <div className="text-blue-600 font-bold bg-blue-50 p-2 rounded text-[10px] flex items-center gap-1.5 border border-blue-100">
-                          <PlusCircle className="w-3.5 h-3.5" />
-                          <span>AIの提案：既存ノードに該当しないため、新規ノードを追加します</span>
-                        </div>
-                        <div className="grid grid-cols-1 gap-1.5">
-                          <div>
-                            <span className="text-[10px] text-slate-500 font-bold">新規ノード名:</span>
-                            <input
-                              type="text"
-                              value={analyzedResult.newNodeLabel || ""}
-                              onChange={(e) =>
-                                setAnalyzedResult({
-                                  ...analyzedResult,
-                                  newNodeLabel: e.target.value,
-                                })
-                              }
-                              className="w-full text-xs border border-slate-200 rounded p-1"
-                            />
-                          </div>
-                          <div>
-                            <span className="text-[10px] text-slate-500 font-bold">親ノードの指定:</span>
-                            <select
-                              value={analyzedResult.newNodeParentId || ""}
-                              onChange={(e) =>
-                                setAnalyzedResult({
-                                  ...analyzedResult,
-                                  newNodeParentId: e.target.value || null,
-                                })
-                              }
-                              className="w-full text-xs border border-slate-200 rounded p-1"
-                            >
-                              <option value="">なし (ルートノードとして追加)</option>
-                              {nodes.map((n) => (
-                                <option key={n.id} value={n.id}>
-                                  {n.label}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        {/* Switch back to existing toggle */}
-                        <button
-                          onClick={() => {
-                            if (nodes.length > 0) {
-                              setAnalyzedResult({
-                                ...analyzedResult,
-                                nodeId: nodes[0].id,
-                                newNodeLabel: null,
-                                newNodeParentId: null,
-                              });
-                            }
-                          }}
-                          className="text-[10px] text-emerald-600 font-bold underline block mt-1 hover:text-emerald-700"
-                        >
-                          既存ノードから手動で選択する
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Save button */}
-                  <button
-                    onClick={handleSaveProgressLog}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg text-xs transition shadow flex items-center justify-center gap-1.5"
-                  >
-                    <span>この進捗データをマップに登録 (保存)</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : (
-            /* READER VIEW: CURRENT LATEST PROGRESS SUMMARY CARD */
-            <div className="bg-white rounded-xl shadow-md border border-slate-200 p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <FileText className="text-emerald-600 w-5 h-5" />
-                  <h3 className="font-bold text-slate-800 text-sm">今週の最新進捗サマリー</h3>
-                </div>
-                <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                  閲覧モード
-                </span>
-              </div>
-
-              {latestLog ? (
-                <div className="space-y-4">
-                  {/* Latest Conclusion */}
-                  <div className="bg-emerald-50/50 border border-emerald-100 rounded-lg p-3">
-                    <span className="block text-[10px] font-black text-emerald-800 uppercase tracking-wider mb-1">
-                      1. 今週の成果・結論
-                    </span>
-                    <p className="text-xs text-slate-700 font-medium leading-relaxed">
-                      {latestLog.conclusion}
-                    </p>
-                  </div>
-
-                  {/* Latest Struggle */}
-                  <div className="bg-amber-50/50 border border-amber-100 rounded-lg p-3">
-                    <span className="block text-[10px] font-black text-amber-800 uppercase tracking-wider mb-1">
-                      2. 本音の葛藤と試行錯誤
-                    </span>
-                    <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
-                      {latestLog.struggle}
-                    </p>
-                  </div>
-
-                  {/* Latest Discussion */}
-                  <div className="bg-indigo-50/50 border border-indigo-100 rounded-lg p-3">
-                    <span className="block text-[10px] font-black text-indigo-800 uppercase tracking-wider mb-1">
-                      3. 上司・教授への相談ポイント
-                    </span>
-                    <p className="text-xs text-slate-700 font-medium leading-relaxed">
-                      {latestLog.discussion}
-                    </p>
-                  </div>
-
-                  <div className="flex gap-2 pt-2">
+      {/* MAIN CONTAINER */}
+      <main className="max-w-[1500px] mx-auto px-4 lg:px-8 mt-6">
+        {isLoadingData ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-3">
+            <Loader2 className="w-10 h-10 text-emerald-600 animate-spin" />
+            <span className="text-sm font-bold text-slate-500">データを同期中...</span>
+          </div>
+        ) : (
+          <>
+            {/* TAB 1: 進捗追加システム (Restricted to creator) */}
+            {activeTab === "add" && (
+              <div className="no-print space-y-6">
+                {!isCreator ? (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center max-w-lg mx-auto shadow-sm space-y-6">
+                    <div className="bg-rose-50 text-rose-600 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto shadow-inner">
+                      <Lock className="w-8 h-8" />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="font-black text-slate-800 text-lg">資料作成者専用機能です</h3>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        この画面は、今週の試行錯誤や結論メモをAIに整理させ、ツリーマップへ登録するための管理者（作成者）専用ページです。右上のボタンからログインしてご利用ください。
+                      </p>
+                    </div>
                     <button
-                      onClick={() => handlePrintLog(latestLog)}
-                      className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 rounded-lg text-xs transition flex items-center justify-center gap-1.5 shadow"
+                      onClick={() => {
+                        setPasscodeInput("");
+                        setShowPasscodeModal(true);
+                      }}
+                      className="bg-slate-900 hover:bg-slate-800 text-white font-black text-xs px-6 py-2.5 rounded-xl shadow transition"
                     >
-                      <Printer className="w-3.5 h-3.5" />
-                      <span>今週の進捗を印刷 (A4用紙最適化)</span>
+                      ログイン画面を開く
                     </button>
                   </div>
-                </div>
-              ) : (
-                <div className="text-slate-400 text-xs py-8 text-center space-y-2">
-                  <HelpCircle className="w-8 h-8 text-slate-300 mx-auto" />
-                  <p>登録された進捗ログがまだありません。</p>
-                  <p className="text-[10px]">資料作成者モードに切り替えて、最初の進捗メモを入力してみましょう！</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* SHARED TIPS BLOCK */}
-          <div className="bg-gradient-to-br from-slate-800 to-slate-950 text-white rounded-xl p-5 shadow-lg space-y-3">
-            <h4 className="font-bold text-xs tracking-wide text-emerald-400 flex items-center gap-1.5">
-              <span>💡</span> システムの活用ノウハウ
-            </h4>
-            <ul className="text-[11px] text-slate-300 space-y-2 list-disc list-inside leading-relaxed">
-              <li>
-                <span className="font-bold text-white">葛藤や本音を残すメリット:</span> うまく進まない部分や迷っている点をあえて言語化することで、本質的なボトルネックを他者と共有できます。
-              </li>
-              <li>
-                <span className="font-bold text-white">現在地のハイライト:</span> マップ上で緑色に輝く箇所が今週の進捗地点です。クリックして過去のログ一覧も見てみましょう。
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: MAP WORKSPACE & DETAIL HISTORY (WIDTH 7 ON LG) */}
-        <div className="lg:col-span-7 flex flex-col gap-6 max-h-[calc(100vh-180px)]">
-          {/* MAP DISPLAY (HEIGHT 60% OR FLEX GROW) */}
-          <div className="flex-1 min-h-[400px] flex flex-col bg-white rounded-xl border border-slate-200 p-4 shadow-sm relative">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
-              <div className="flex items-center gap-2">
-                <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <h3 className="font-bold text-slate-800 text-sm">プロジェクト全体像マップ</h3>
-              </div>
-              <div className="text-[11px] text-slate-500">
-                ノード数: <span className="font-bold text-slate-800">{nodes.length}</span> 個
-              </div>
-            </div>
-
-            {isLoadingData ? (
-              <div className="flex-1 flex items-center justify-center text-slate-500 text-xs gap-2">
-                <RefreshCw className="animate-spin w-4 h-4" />
-                <span>データをロード中...</span>
-              </div>
-            ) : nodes.length > 0 ? (
-              <div className="flex-1">
-                <ProjectMap
-                  nodesList={nodes}
-                  currentNodeId={latestLog ? latestLog.nodeId : null}
-                  onSelectNode={(id) => setSelectedNodeId(id)}
-                  isCreator={isCreator}
-                  onAddChildNode={handleAddChildNodeClick}
-                  onDeleteNode={handleDeleteNode}
-                />
-              </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center border border-dashed border-slate-300 rounded-xl bg-slate-50 text-slate-400 text-xs flex-col gap-2 p-6">
-                <Plus className="w-8 h-8 text-slate-300" />
-                <p className="font-semibold text-slate-600">プロジェクトのマップノードがありません</p>
-                {isCreator ? (
-                  <button
-                    onClick={() => handleAddChildNodeClick("")}
-                    className="mt-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-lg text-xs"
-                  >
-                    最初のルートノードを追加する
-                  </button>
                 ) : (
-                  <p className="text-[10px]">資料作成者が最初のノードを追加するのをお待ちください。</p>
-                )}
-              </div>
-            )}
-          </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-          {/* HISTORIES OF SELECTED NODE (HEIGHT 40%) */}
-          <div className="h-[280px] bg-white rounded-xl border border-slate-200 p-5 shadow-sm flex flex-col">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <History className="text-indigo-600 w-4 h-4" />
-                <h3 className="font-bold text-slate-800 text-sm">
-                  {activeNode ? `「${activeNode.label}」の進捗履歴` : "ノードの進捗履歴"}
-                </h3>
-              </div>
-              <span className="bg-indigo-50 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                履歴 {activeNodeLogs.length} 件
-              </span>
-            </div>
+                    {/* Left side: Input area */}
+                    <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+                      <div className="flex items-center justify-between border-b pb-3">
+                        <h2 className="font-black text-slate-800 flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-emerald-600 animate-pulse" />
+                          <span>今週の進捗メモ入力</span>
+                        </h2>
+                        <span className="bg-emerald-50 text-emerald-700 text-[10px] px-2 py-0.5 rounded-full font-black">
+                          AI解析・複数ノード分割
+                        </span>
+                      </div>
 
-            {activeNode ? (
-              <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-                {activeNodeLogs.length > 0 ? (
-                  activeNodeLogs.map((log) => {
-                    const isEditing = editingLogId === log.id;
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        日々の活動・試行錯誤メモ（進捗量が多いと**AIが自動的に複数ノードへ分割**してくれます）:
+                      </p>
 
-                    return (
-                      <div
-                        key={log.id}
-                        className="border border-slate-100 rounded-lg p-4 bg-slate-50/50 space-y-3 relative hover:border-indigo-100 hover:bg-slate-50 transition"
-                      >
-                        {/* Header of log card */}
-                        <div className="flex items-center justify-between text-[11px] text-slate-400">
-                          <span className="font-medium">
-                            登録日時: {new Date(log.createdAt).toLocaleString("ja-JP")}
-                          </span>
+                      <textarea
+                        value={rawMemo}
+                        onChange={(e) => setRawMemo(e.target.value)}
+                        placeholder={`【実験項目1：プロンプト性能評価】
+今週はGeminiのJSON構造化出力プロンプトの調整を行った。スキーマが安定したが、極稀に想定外のハルシネーションが発生して苦戦した。
 
-                          <div className="flex items-center gap-2 no-print">
-                            <button
-                              onClick={() => handlePrintLog(log)}
-                              className="text-slate-500 hover:text-slate-800 flex items-center gap-0.5"
-                              title="このログ単体を印刷"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              <span>印刷</span>
-                            </button>
+【実験項目2：状態トグルの実装】
+進捗ツリー上で「話済み」か「未報告」かを切り替えられるようにチェックボックスと状態管理を実装した。また未報告のログがある箇所のマップ表示を変更して視認性を高めた。`}
+                        className="w-full h-80 border border-slate-200 rounded-xl p-3 focus:ring-2 focus:ring-emerald-500 focus:outline-none text-xs font-mono leading-relaxed"
+                      />
 
-                            {isCreator && (
-                              <>
-                                {!isEditing ? (
-                                  <button
-                                    onClick={() => startEditingLog(log)}
-                                    className="text-blue-500 hover:text-blue-700 flex items-center gap-0.5"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                    <span>編集</span>
-                                  </button>
-                                ) : (
-                                  <button
-                                    onClick={() => saveEditedLog(log.id)}
-                                    className="text-emerald-600 hover:text-emerald-800 font-bold flex items-center gap-0.5"
-                                  >
-                                    <span>保存</span>
-                                  </button>
-                                )}
-
-                                <button
-                                  onClick={() => deleteLog(log.id)}
-                                  className="text-red-500 hover:text-red-700 flex items-center gap-0.5"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  <span>削除</span>
-                                </button>
-                              </>
-                            )}
+                      {!geminiApiKey && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2 text-xs text-amber-800">
+                          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                          <div className="space-y-1">
+                            <p className="font-bold text-[11px]">Gemini APIキーが設定されていません</p>
+                            <p className="text-[10px] text-amber-700 leading-relaxed">
+                              APIキーがないため、**AIシミュレーション機能（ローカル擬似解析）**が動作します。メモが長いか、行頭に bullet (-, *) が複数ある場合は自動で2つのトピックに分割提案を行います。
+                            </p>
                           </div>
                         </div>
+                      )}
 
-                        {/* Log fields (View / Edit Form) */}
-                        {isEditing ? (
-                          <div className="space-y-3 text-xs">
-                            <div className="space-y-1">
-                              <span className="font-black text-emerald-800 text-[10px] block">進捗の結論:</span>
-                              <textarea
-                                value={editConclusion}
-                                onChange={(e) => setEditConclusion(e.target.value)}
-                                rows={2}
-                                className="w-full border border-slate-200 rounded p-1.5"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <span className="font-black text-amber-800 text-[10px] block">葛藤・試行錯誤:</span>
-                              <textarea
-                                value={editStruggle}
-                                onChange={(e) => setEditStruggle(e.target.value)}
-                                rows={3}
-                                className="w-full border border-slate-200 rounded p-1.5"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <span className="font-black text-indigo-800 text-[10px] block">相談ポイント:</span>
-                              <textarea
-                                value={editDiscussion}
-                                onChange={(e) => setEditDiscussion(e.target.value)}
-                                rows={2}
-                                className="w-full border border-slate-200 rounded p-1.5"
-                              />
-                            </div>
-                          </div>
+                      {apiError && (
+                        <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-3 text-xs space-y-2">
+                          <p className="font-bold flex items-center gap-1.5 text-[11px]">
+                            <AlertTriangle className="w-4 h-4 text-rose-500" />
+                            <span>解析に失敗しました</span>
+                          </p>
+                          <p className="text-[10px] text-rose-700 leading-relaxed">{apiError}</p>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={handleAIAnalyze}
+                        disabled={isAnalyzing || !rawMemo.trim()}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black text-xs py-3 rounded-xl shadow transition flex items-center justify-center gap-2"
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>思考ログを切り分け中...</span>
+                          </>
                         ) : (
-                          <div className="space-y-2.5 text-xs">
-                            <div className="bg-white p-2 rounded border border-slate-100">
-                              <span className="font-extrabold text-emerald-700 text-[10px] block mb-0.5">
-                                ◆ 進捗の結論
-                              </span>
-                              <p className="text-slate-700 leading-relaxed font-semibold">
-                                {log.conclusion}
-                              </p>
-                            </div>
-                            <div className="bg-white p-2 rounded border border-slate-100">
-                              <span className="font-extrabold text-amber-700 text-[10px] block mb-0.5">
-                                ◆ 本音の葛藤と試行錯誤
-                              </span>
-                              <p className="text-slate-600 leading-relaxed whitespace-pre-wrap">
-                                {log.struggle}
-                              </p>
-                            </div>
-                            <div className="bg-white p-2 rounded border border-slate-100">
-                              <span className="font-extrabold text-indigo-700 text-[10px] block mb-0.5">
-                                ◆ 相談・議論ポイント
-                              </span>
-                              <p className="text-slate-600 leading-relaxed font-semibold">
-                                {log.discussion}
-                              </p>
-                            </div>
-                          </div>
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            <span>{geminiApiKey ? "AI分析（分割対応）を実行" : "シミュレーション解析（分割対応）を実行"}</span>
+                          </>
                         )}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div className="text-slate-400 text-xs py-8 text-center">
-                    このノードに紐づく過去の進捗ログはありません。
+                      </button>
+                    </div>
+
+                    {/* Right side: AI Results / Verification Panel */}
+                    <div className="lg:col-span-7 space-y-4">
+                      {analyzedItems.length > 0 ? (
+                        <div className="space-y-4">
+                          <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-100 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+                            <div className="space-y-0.5">
+                              <h3 className="font-black text-emerald-900 text-sm flex items-center gap-1.5">
+                                <Sparkles className="w-4 h-4 text-emerald-600 animate-pulse" />
+                                <span>AIが {analyzedItems.length} つの進捗に切り分けました</span>
+                              </h3>
+                              {isResultSimulated && (
+                                <span className="inline-block bg-amber-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full animate-pulse">
+                                  AIシミュレーション実行中
+                                </span>
+                              )}
+                              <p className="text-[10px] text-emerald-700 leading-normal">
+                                ※それぞれのカードから個別に調整・マッピングして保存、または一括で保存できます。
+                              </p>
+                            </div>
+                            <button
+                              onClick={handleSaveAllAnalyzedItems}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs px-4 py-2 rounded-xl shadow-md transition whitespace-nowrap"
+                            >
+                              すべて一括で保存・登録
+                            </button>
+                          </div>
+
+                          {/* Render proposed split cards */}
+                          <div className="space-y-4">
+                            {analyzedItems.map((item, index) => (
+                              <div
+                                key={item.id}
+                                className="bg-white border-2 border-slate-100 rounded-2xl p-5 shadow-sm space-y-4 relative"
+                              >
+                                <button
+                                  onClick={() => handleDeleteAnalyzedItem(item.id)}
+                                  className="absolute top-4 right-4 text-slate-300 hover:text-rose-500 transition"
+                                  title="この進捗を破棄"
+                                >
+                                  <X className="w-5 h-5" />
+                                </button>
+
+                                <div className="flex items-center gap-2">
+                                  <span className="w-6 h-6 bg-emerald-100 text-emerald-700 text-xs font-black rounded-full flex items-center justify-center">
+                                    {index + 1}
+                                  </span>
+                                  <h4 className="font-black text-slate-800 text-xs">
+                                    進捗トピック #{index + 1}
+                                  </h4>
+                                </div>
+
+                                {/* Conclusion edit */}
+                                <div className="space-y-1">
+                                  <label className="block text-[10px] font-black text-slate-400 uppercase">
+                                    結論・進捗要約:
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={item.conclusion}
+                                    onChange={(e) =>
+                                      handleUpdateAnalyzedItemField(item.id, "conclusion", e.target.value)
+                                    }
+                                    className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-800 font-semibold"
+                                  />
+                                </div>
+
+                                {/* Struggle edit */}
+                                <div className="space-y-1">
+                                  <label className="block text-[10px] font-black text-slate-400 uppercase">
+                                    葛藤と試行錯誤プロセス:
+                                  </label>
+                                  <textarea
+                                    value={item.struggle}
+                                    onChange={(e) =>
+                                      handleUpdateAnalyzedItemField(item.id, "struggle", e.target.value)
+                                    }
+                                    className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-700 leading-relaxed"
+                                    rows={2}
+                                  />
+                                </div>
+
+                                {/* Discussion edit */}
+                                <div className="space-y-1">
+                                  <label className="block text-[10px] font-black text-slate-400 uppercase">
+                                    相談・議論のテーマ:
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={item.discussion}
+                                    onChange={(e) =>
+                                      handleUpdateAnalyzedItemField(item.id, "discussion", e.target.value)
+                                    }
+                                    className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-600 font-semibold"
+                                  />
+                                </div>
+
+                                {/* Mapping Selector */}
+                                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3.5 space-y-3 text-xs">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-black text-slate-700">マッピング設定（紐付け先ノード）:</span>
+                                    <div className="flex gap-2">
+                                      <label className="flex items-center gap-1.5 font-bold text-[11px] cursor-pointer text-slate-600">
+                                        <input
+                                          type="radio"
+                                          name={`mapping-type-${item.id}`}
+                                          checked={item.mappingType === "new"}
+                                          onChange={() =>
+                                            handleUpdateAnalyzedItemField(item.id, "mappingType", "new")
+                                          }
+                                          className="text-emerald-600 focus:ring-emerald-500"
+                                        />
+                                        <span>新規ノードを自動生成</span>
+                                      </label>
+                                      <label className="flex items-center gap-1.5 font-bold text-[11px] cursor-pointer text-slate-600">
+                                        <input
+                                          type="radio"
+                                          name={`mapping-type-${item.id}`}
+                                          checked={item.mappingType === "existing"}
+                                          onChange={() =>
+                                            handleUpdateAnalyzedItemField(item.id, "mappingType", "existing")
+                                          }
+                                          className="text-emerald-600 focus:ring-emerald-500"
+                                        />
+                                        <span>既存ノードに紐付け</span>
+                                      </label>
+                                    </div>
+                                  </div>
+
+                                  {item.mappingType === "existing" ? (
+                                    <select
+                                      value={item.nodeId}
+                                      onChange={(e) =>
+                                        handleUpdateAnalyzedItemField(item.id, "nodeId", e.target.value)
+                                      }
+                                      className="w-full bg-white border border-slate-200 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 text-xs text-slate-700 font-semibold"
+                                    >
+                                      {nodes.map((n) => (
+                                        <option key={n.id} value={n.id}>
+                                          {n.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                      <div className="space-y-0.5">
+                                        <span className="text-[10px] font-bold text-slate-400">新規ノード名:</span>
+                                        <input
+                                          type="text"
+                                          value={item.newNodeLabel}
+                                          onChange={(e) =>
+                                            handleUpdateAnalyzedItemField(item.id, "newNodeLabel", e.target.value)
+                                          }
+                                          className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 font-semibold"
+                                        />
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <span className="text-[10px] font-bold text-slate-400">親ノードの指定:</span>
+                                        <select
+                                          value={item.newNodeParentId}
+                                          onChange={(e) =>
+                                            handleUpdateAnalyzedItemField(item.id, "newNodeParentId", e.target.value)
+                                          }
+                                          className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 font-semibold"
+                                        >
+                                          <option value="node-root">なし（Root直下）</option>
+                                          {nodes.map((n) => (
+                                            <option key={n.id} value={n.id}>
+                                              {n.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="flex justify-end">
+                                  <button
+                                    onClick={async () => {
+                                      // Save just this item
+                                      try {
+                                        setIsAnalyzing(true);
+                                        let finalId = item.nodeId;
+                                        if (item.mappingType === "new" && item.newNodeLabel.trim()) {
+                                          const parent = item.newNodeParentId === "node-root" || !item.newNodeParentId ? null : item.newNodeParentId;
+                                          const created = await dbService.createNode(
+                                            selectedProject!.id,
+                                            item.newNodeLabel.trim(),
+                                            parent
+                                          );
+                                          finalId = created.id;
+                                        }
+                                        await dbService.createLog(
+                                          selectedProject!.id,
+                                          finalId || (nodes.length > 0 ? nodes[0].id : "node-root"),
+                                          rawMemo,
+                                          item.conclusion,
+                                          item.struggle,
+                                          item.discussion,
+                                          undefined,
+                                          undefined,
+                                          false
+                                        );
+                                        showToast("進捗トピックをマップに登録しました！");
+                                        handleDeleteAnalyzedItem(item.id);
+                                        await loadProjectDetails(selectedProject!.id);
+                                      } catch (err) {
+                                        console.error(err);
+                                      } finally {
+                                        setIsAnalyzing(false);
+                                      }
+                                    }}
+                                    className="bg-slate-900 hover:bg-slate-800 text-white font-black text-[11px] px-3.5 py-1.5 rounded-lg transition"
+                                  >
+                                    このトピックのみをマップに登録
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-100 border-2 border-dashed border-slate-300 rounded-2xl p-12 text-center text-slate-400 font-bold space-y-2">
+                          <p>AIによる分析結果はここに表示されます</p>
+                          <p className="text-[11px] text-slate-400 font-semibold">
+                            左側で今週の進捗メモを入力して、AI解析を実行してください。
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="flex-1 flex items-center justify-center text-slate-400 text-xs text-center">
-                マップ上のノードをクリックすると、紐づく進捗ログ履歴が表示されます。
+            )}
+
+            {/* TAB 2: 進捗ツリー閲覧システム (Accessible to all) */}
+            {activeTab === "tree" && (
+              <div className="no-print grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+                {/* Left side (60%): Hierarchy Map */}
+                <div className="lg:col-span-7 xl:col-span-8 h-[550px] lg:h-[700px] w-full">
+                  <ProjectMap
+                    nodesList={nodes}
+                    currentNodeId={selectedNodeId}
+                    onSelectNode={setSelectedNodeId}
+                    isCreator={isCreator}
+                    onAddChildNode={handleAddChildNode}
+                    onDeleteNode={handleDeleteNode}
+                    unspokenNodeIds={unspokenNodeIds}
+                  />
+                </div>
+
+                {/* Right side (40%): Node Details Panel */}
+                <div className="lg:col-span-5 xl:col-span-4 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6 max-h-[700px] overflow-y-auto">
+                  {selectedNodeId ? (
+                    <>
+                      {/* Node Header Info */}
+                      <div className="border-b pb-4 space-y-2">
+                        <span className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded uppercase">
+                          選択中のノード
+                        </span>
+                        <h2 className="text-base font-black text-slate-800 leading-tight">
+                          {nodes.find((n) => n.id === selectedNodeId)?.label}
+                        </h2>
+                      </div>
+
+                      {/* Creator Node Editing Controls */}
+                      {isCreator && selectedNodeId !== "node-root" && (
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 space-y-4">
+                          <h4 className="text-[11px] font-black text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                            <Edit3 className="w-3.5 h-3.5" />
+                            <span>ノード管理設定（管理者）</span>
+                          </h4>
+
+                          {/* Rename form */}
+                          <form onSubmit={handleRenameNodeSubmit} className="space-y-1.5">
+                            <label className="block text-[10px] font-bold text-slate-400">
+                              ノード名を変更:
+                            </label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={nodeRenameInput}
+                                onChange={(e) => setNodeRenameInput(e.target.value)}
+                                className="flex-1 border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 font-semibold"
+                              />
+                              <button
+                                type="submit"
+                                className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg transition shrink-0"
+                              >
+                                変更
+                              </button>
+                            </div>
+                          </form>
+
+                          {/* Reparent form */}
+                          <form onSubmit={handleReparentNodeSubmit} className="space-y-1.5">
+                            <label className="block text-[10px] font-bold text-slate-400">
+                              親ノードを変更（依存・親子関係の切り替え）:
+                            </label>
+                            <div className="flex gap-2">
+                              <select
+                                value={nodeNewParentId}
+                                onChange={(e) => setNodeNewParentId(e.target.value)}
+                                className="flex-1 bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 font-semibold cursor-pointer"
+                              >
+                                <option value="null">なし（Root直下）</option>
+                                {potentialParents.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="submit"
+                                className="bg-slate-950 hover:bg-slate-800 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg transition shrink-0"
+                              >
+                                変更
+                              </button>
+                            </div>
+                          </form>
+                        </div>
+                      )}
+
+                      {/* Node Progress Logs Section */}
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-xs font-black text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                            <FileText className="w-4 h-4 text-slate-400" />
+                            <span>紐づく進捗ログ一覧 ({selectedNodeLogs.length})</span>
+                          </h3>
+
+                          {/* Multi select summarizing trigger */}
+                          {checkedLogIds.size >= 2 && (
+                            <button
+                              onClick={handleCollectiveSummarySubmit}
+                              disabled={isCollectiveSummarizing}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black px-3 py-1.5 rounded-lg shadow-md transition flex items-center gap-1"
+                            >
+                              {isCollectiveSummarizing ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Sparkles className="w-3 text-amber-300" />
+                              )}
+                              <span>選んだ {checkedLogIds.size} 件をまとめて要約</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {selectedNodeLogs.length > 0 ? (
+                          <div className="space-y-3">
+                            {selectedNodeLogs.map((log) => {
+                              const isUnreported = log.talked === false || log.talked === undefined;
+                              return (
+                                <div
+                                  key={log.id}
+                                  className={`border rounded-xl p-4 space-y-3 transition-all duration-150 ${
+                                    isUnreported
+                                      ? "border-amber-300 bg-amber-50/20 shadow-sm"
+                                      : "border-slate-100 bg-white"
+                                  }`}
+                                >
+                                  {/* Log Top Controls Row */}
+                                  <div className="flex items-center justify-between border-b pb-2">
+                                    <div className="flex items-center gap-2">
+                                      {/* Checkbox for collective summary selection */}
+                                      <input
+                                        type="checkbox"
+                                        checked={checkedLogIds.has(log.id)}
+                                        onChange={() => handleToggleSelectLog(log.id)}
+                                        className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer w-3.5 h-3.5"
+                                        title="一括要約の対象に含める"
+                                      />
+                                      <span className="text-[10px] text-slate-400 font-bold">
+                                        {new Date(log.createdAt).toLocaleDateString("ja-JP")}
+                                      </span>
+                                    </div>
+
+                                    {/* Talked vs Unreported Toggling Controls */}
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={() => handleToggleTalked(log)}
+                                        className={`text-[9px] font-black px-2 py-0.5 rounded transition ${
+                                          isUnreported
+                                            ? "bg-amber-100 hover:bg-amber-200 text-amber-800"
+                                            : "bg-emerald-100 hover:bg-emerald-200 text-emerald-800"
+                                        }`}
+                                        title="話済み・未報告ステータスを切り替え"
+                                      >
+                                        {isUnreported ? "未報告（切り替え）" : "報告済（切り替え）"}
+                                      </button>
+
+                                      {/* Creator controls for edit/delete */}
+                                      {isCreator && (
+                                        <div className="flex items-center gap-1 border-l pl-2">
+                                          <button
+                                            onClick={() => handleLogEditStart(log)}
+                                            className="text-slate-400 hover:text-indigo-600 transition"
+                                            title="進捗を編集"
+                                          >
+                                            <Edit3 className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            onClick={() => handleLogDelete(log.id)}
+                                            className="text-slate-400 hover:text-rose-600 transition"
+                                            title="進捗を削除"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Inline Log Editor */}
+                                  {editingLogId === log.id ? (
+                                    <form
+                                      onSubmit={(e) => handleLogEditSubmit(e, log.id)}
+                                      className="space-y-3"
+                                    >
+                                      <div className="space-y-1">
+                                        <label className="block text-[10px] font-black text-slate-400">
+                                          結論:
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={editConclusion}
+                                          onChange={(e) => setEditConclusion(e.target.value)}
+                                          className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-800 font-semibold"
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="block text-[10px] font-black text-slate-400">
+                                          葛藤:
+                                        </label>
+                                        <textarea
+                                          value={editStruggle}
+                                          onChange={(e) => setEditStruggle(e.target.value)}
+                                          className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700"
+                                          rows={2}
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="block text-[10px] font-black text-slate-400">
+                                          相談事項:
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={editDiscussion}
+                                          onChange={(e) => setEditDiscussion(e.target.value)}
+                                          className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-600"
+                                        />
+                                      </div>
+                                      <div className="flex gap-1.5 justify-end">
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingLogId(null)}
+                                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] px-2.5 py-1 rounded"
+                                        >
+                                          キャンセル
+                                        </button>
+                                        <button
+                                          type="submit"
+                                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] px-2.5 py-1 rounded"
+                                        >
+                                          保存
+                                        </button>
+                                      </div>
+                                    </form>
+                                  ) : (
+                                    <div className="space-y-2 text-xs leading-relaxed">
+                                      <div className="space-y-0.5">
+                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
+                                          1. 結論要約
+                                        </span>
+                                        <p className="font-bold text-slate-800">
+                                          {log.conclusion}
+                                        </p>
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
+                                          2. 葛藤と試行錯誤
+                                        </span>
+                                        <p className="text-slate-600 whitespace-pre-wrap">
+                                          {log.struggle}
+                                        </p>
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
+                                          3. 相談テーマ
+                                        </span>
+                                        <p className="font-semibold text-slate-700 italic">
+                                          ❓ {log.discussion}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-center py-12 text-slate-400 text-xs font-semibold">
+                            このノードに紐づく進捗ログはありません。
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-24 text-slate-400 font-bold space-y-1 text-xs">
+                      <p>マップ上のノードを選択してください</p>
+                      <p className="text-slate-400 font-normal">
+                        詳細な進捗ログや相談事項がここに表示されます。
+                      </p>
+                    </div>
+                  )}
+                </div>
+
               </div>
             )}
-          </div>
-        </div>
+
+            {/* TAB 3: 今週の進捗報告資料 (A4 print layout preview) */}
+            {activeTab === "report" && (
+              <div className="space-y-6">
+
+                {/* Screen-only Preview Header block */}
+                <div className="no-print bg-white border border-slate-200 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <h2 className="font-black text-slate-800 flex items-center gap-2">
+                      <Printer className="w-5 h-5 text-indigo-600" />
+                      <span>今週の進捗報告資料プレビュー</span>
+                    </h2>
+                    <p className="text-xs text-slate-500 leading-normal">
+                      マップ上の進捗ログのうち、**まだ話していない（未報告）**状態のものだけを自動抽出してA4報告書フォーマットで表示しています。
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => window.print()}
+                    disabled={unreportedLogsByNode.length === 0}
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black text-xs px-5 py-2.5 rounded-xl shadow-md transition flex items-center justify-center gap-2 self-start md:self-auto"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>資料をPDF出力・印刷する (A4用紙最適化)</span>
+                  </button>
+                </div>
+
+                {/* Print Content Area (Styled for A4 paper) */}
+                {unreportedLogsByNode.length > 0 ? (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-sm max-w-[900px] mx-auto space-y-8 font-serif leading-relaxed">
+
+                    {/* Header line */}
+                    <div className="border-b-4 border-slate-900 pb-4 flex justify-between items-end">
+                      <div>
+                        <h1 className="text-2xl font-black tracking-tight text-slate-950">
+                          週次進捗報告：思考ログ資料
+                        </h1>
+                        <span className="text-xs text-slate-600 font-bold mt-1 block">
+                          プロジェクト名: {selectedProject?.title}
+                        </span>
+                      </div>
+                      <div className="text-right text-xs text-slate-500">
+                        <span>報告作成日: {new Date().toLocaleDateString("ja-JP")}</span>
+                      </div>
+                    </div>
+
+                    {/* Grouped contents */}
+                    <div className="space-y-8">
+                      {unreportedLogsByNode.map((group, index) => (
+                        <div key={group.nodeLabel + index} className="space-y-4">
+                          <h3 className="text-sm font-black text-indigo-950 bg-indigo-50/50 border-l-4 border-indigo-600 px-3 py-1.5 rounded-r">
+                            【マップ上の対象領域：{group.nodeLabel}】
+                          </h3>
+
+                          <div className="space-y-6 pl-2">
+                            {group.logs.map((log, logIdx) => (
+                              <div
+                                key={log.id}
+                                className="border-b border-dashed border-slate-200 pb-4 last:border-none last:pb-0 space-y-3 text-xs"
+                              >
+                                {/* Mini header inside group */}
+                                <div className="text-[10px] text-slate-400 font-black flex items-center justify-between">
+                                  <span>進捗ログ #{logIdx + 1}</span>
+                                  <span>記録日: {new Date(log.createdAt).toLocaleDateString("ja-JP")}</span>
+                                </div>
+
+                                {/* 1. Conclusion */}
+                                <div className="space-y-0.5">
+                                  <h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1">
+                                    <span className="text-emerald-600">■</span>
+                                    <span>成果・結論要約</span>
+                                  </h4>
+                                  <p className="text-slate-800 font-semibold pl-4">
+                                    {log.conclusion}
+                                  </p>
+                                </div>
+
+                                {/* 2. Struggle */}
+                                <div className="space-y-0.5">
+                                  <h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1">
+                                    <span className="text-amber-600">■</span>
+                                    <span>葛藤と試行錯誤（本音プロセス）</span>
+                                  </h4>
+                                  <p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">
+                                    {log.struggle}
+                                  </p>
+                                </div>
+
+                                {/* 3. Discussion */}
+                                <div className="space-y-0.5">
+                                  <h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1">
+                                    <span className="text-indigo-600">■</span>
+                                    <span>今後の相談・議論のテーマ</span>
+                                  </h4>
+                                  <p className="text-indigo-900 font-bold italic pl-4">
+                                    ❓ {log.discussion}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Footer note */}
+                    <div className="border-t border-slate-200 pt-6 text-center text-[10px] text-slate-400">
+                      ※マップ型 思考ログ構築システムにより自動生成（未報告データのみの出力）
+                    </div>
+
+                  </div>
+                ) : (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-16 text-center text-slate-400 font-bold space-y-2 max-w-lg mx-auto shadow-sm">
+                    <p>現在、未報告の進捗ログはありません。</p>
+                    <p className="text-[11px] text-slate-400 font-semibold">
+                      すべての進捗が「報告済み」に設定されています。
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </>
+        )}
       </main>
 
-      {/* 4. MODALS & POPUPS (NO-PRINT) */}
-      {/* 4.1 CREATOR PASSCODE MODAL */}
+      {/* 5. DEDICATED PRINT LAYOUT CONTAINER (FOR window.print() ONLY) */}
+      <div className="print-only">
+        <div className="border-b-4 border-slate-950 pb-4 mb-6 flex justify-between items-end">
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-950">
+              週次進捗報告：思考ログ資料
+            </h1>
+            <span className="text-xs text-slate-600 font-bold mt-1 block">
+              プロジェクト名: {selectedProject?.title}
+            </span>
+          </div>
+          <div className="text-right text-xs text-slate-500">
+            <span>報告作成日: {new Date().toLocaleDateString("ja-JP")}</span>
+          </div>
+        </div>
+
+        <div className="space-y-8">
+          {unreportedLogsByNode.length > 0 ? (
+            unreportedLogsByNode.map((group, index) => (
+              <div key={"print-group-" + index} className="space-y-4 break-inside-avoid">
+                <h3 className="text-sm font-black text-indigo-950 bg-slate-100 border-l-4 border-slate-800 px-3 py-1 rounded">
+                  【対象領域：{group.nodeLabel}】
+                </h3>
+
+                <div className="space-y-6 pl-2">
+                  {group.logs.map((log, logIdx) => (
+                    <div
+                      key={"print-log-" + log.id}
+                      className="border-b border-dashed border-slate-300 pb-4 last:border-none last:pb-0 space-y-3 text-xs"
+                    >
+                      <div className="text-[10px] text-slate-400 font-black flex justify-between">
+                        <span>進捗ログ #{logIdx + 1}</span>
+                        <span>記録日: {new Date(log.createdAt).toLocaleDateString("ja-JP")}</span>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <h4 className="font-bold text-slate-900 leading-snug">
+                          ■ 成果・結論要約
+                        </h4>
+                        <p className="text-slate-800 font-semibold pl-4">
+                          {log.conclusion}
+                        </p>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <h4 className="font-bold text-slate-900 leading-snug">
+                          ■ 葛藤と試行錯誤（本音プロセス）
+                        </h4>
+                        <p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">
+                          {log.struggle}
+                        </p>
+                      </div>
+
+                      <div className="space-y-0.5">
+                        <h4 className="font-bold text-slate-900 leading-snug">
+                          ■ 今後の相談・議論のテーマ
+                        </h4>
+                        <p className="text-slate-900 font-bold pl-4">
+                          ❓ {log.discussion}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="text-center text-slate-400 py-12">未報告の進捗ログはありません。</p>
+          )}
+        </div>
+
+        <div className="mt-12 pt-6 border-t border-slate-200 text-center text-[10px] text-slate-400">
+          ※マップ型 思考ログ構築システムにより自動生成（未報告データのみの出力）
+        </div>
+      </div>
+
+      {/* MODALS */}
+
+      {/* PASSCODE MODAL */}
       {showPasscodeModal && (
         <div className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                <Unlock className="w-5 h-5 text-emerald-600" />
-                <span>作成者ロックを解除</span>
+              <h3 className="font-black text-slate-800 flex items-center gap-2 text-sm">
+                <Lock className="w-5 h-5 text-emerald-600 animate-pulse" />
+                <span>資料作成者認証（管理者用）</span>
               </h3>
               <button
-                onClick={() => setShowPasscodeModal(false)}
+                onClick={() => {
+                  setShowPasscodeModal(false);
+                  setPasscodeError(false);
+                }}
                 className="text-slate-400 hover:text-slate-600"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleUnlockSubmit} className="space-y-4">
+            <form onSubmit={handlePasscodeSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold text-slate-600">
-                  作成用パスコードを入力:
+                  認証用のパスコードを入力してください:
                 </label>
                 <input
                   type="password"
                   value={passcodeInput}
                   onChange={(e) => setPasscodeInput(e.target.value)}
-                  placeholder="admin"
-                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500"
+                  placeholder="パスコード"
+                  className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   autoFocus
                 />
                 {passcodeError && (
-                  <p className="text-[11px] text-red-500 font-bold">パスコードが正しくありません。</p>
+                  <p className="text-[11px] text-rose-500 font-bold">パスコードが正しくありません。</p>
                 )}
                 <p className="text-[10px] text-slate-400 leading-normal">
-                  ※初期状態では任意のパスコード、または &apos;admin&apos; と入力するだけで解除可能です。環境変数 `NEXT_PUBLIC_CREATOR_PASSCODE` を設定することでロックできます。
+                  ※初期状態では任意の非空パスコード、または &apos;admin&apos; でログイン可能です。
                 </p>
               </div>
               <button
                 type="submit"
-                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2 rounded-xl text-xs"
+                className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-2 rounded-xl text-xs transition"
               >
-                認証してロック解除
+                ログイン
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* 4.2 GEMINI KEY CONFIG MODAL */}
+      {/* GEMINI KEY CONFIG MODAL */}
       {showKeyModal && (
         <div className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-emerald-600" />
+              <h3 className="font-black text-slate-800 flex items-center gap-2 text-sm">
+                <Settings className="w-5 h-5 text-amber-500" />
                 <span>Gemini APIキー設定</span>
               </h3>
               <button
@@ -1180,37 +1745,36 @@ export default function Home() {
             <form onSubmit={handleSaveApiKey} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold text-slate-600">
-                  Gemini API キー (ブラウザにのみ保存されます):
+                  Gemini API キー (ブラウザのローカルストレージにのみ保存されます):
                 </label>
                 <input
                   type="password"
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   placeholder="AIzaSy..."
-                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 text-xs"
+                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 text-xs focus:outline-none font-mono"
                   autoFocus
                 />
                 <p className="text-[10px] text-slate-400 leading-normal">
-                  キーはお客様のブラウザの `localStorage` に安全に保管され、Next.jsのAPIルート経由でGemini APIへの問い合わせ時にのみ使用されます。
+                  キーはお客様のブラウザ内に安全に保管され、Next.jsのAPIルート経由でGemini APIに接続時のみ使われます。
                 </p>
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button
                   type="button"
                   onClick={() => {
-                    dbService.createProject("自律型AIエージェント開発プロジェクト"); // seed helper if lost
                     saveGeminiApiKey("");
                     setApiKeyInput("");
                     setShowKeyModal(false);
                     showToast("APIキーをクリアしました。");
                   }}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold"
                 >
                   キーを消去
                 </button>
                 <button
                   type="submit"
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-xs"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-4 py-2 rounded-lg text-xs shadow-md transition"
                 >
                   保存
                 </button>
@@ -1220,12 +1784,12 @@ export default function Home() {
         </div>
       )}
 
-      {/* 4.3 ADD PROJECT MODAL */}
+      {/* ADD PROJECT MODAL */}
       {showAddProjectModal && (
         <div className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <h3 className="font-black text-slate-800 flex items-center gap-2 text-sm">
                 <FolderPlus className="w-5 h-5 text-emerald-600" />
                 <span>新規プロジェクト作成</span>
               </h3>
@@ -1245,14 +1809,14 @@ export default function Home() {
                   type="text"
                   value={newProjectTitle}
                   onChange={(e) => setNewProjectTitle(e.target.value)}
-                  placeholder="例：卒業研究・システム自動開発"
-                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500"
+                  placeholder="例：卒論・システム自動設計"
+                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-emerald-500 focus:outline-none text-xs"
                   autoFocus
                 />
               </div>
               <button
                 type="submit"
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-xl text-xs"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-2 rounded-xl text-xs transition shadow-md"
               >
                 プロジェクトを作成して開始
               </button>
@@ -1261,14 +1825,14 @@ export default function Home() {
         </div>
       )}
 
-      {/* 4.4 ADD CHILD NODE MODAL */}
+      {/* ADD CHILD NODE MODAL */}
       {showAddNodeModal && (
         <div className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between border-b pb-2">
-              <h3 className="font-bold text-slate-800 flex items-center gap-2">
+              <h3 className="font-black text-slate-800 flex items-center gap-2 text-sm">
                 <PlusCircle className="w-5 h-5 text-blue-600" />
-                <span>手動ノード追加</span>
+                <span>手動で子ノード追加</span>
               </h3>
               <button
                 onClick={() => setShowAddNodeModal(false)}
@@ -1280,26 +1844,26 @@ export default function Home() {
             <form onSubmit={handleAddNodeSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-xs font-bold text-slate-600">
-                  ノードの名称・表示名:
+                  ノードの表示ラベル名:
                 </label>
                 <input
                   type="text"
                   value={newNodeLabelInput}
                   onChange={(e) => setNewNodeLabelInput(e.target.value)}
-                  placeholder="例：実験3：追加テストデータの評価"
-                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500"
+                  placeholder="例：追加課題の分析と実験設計"
+                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-xs"
                   autoFocus
                 />
               </div>
               <div className="text-xs text-slate-500">
                 親ノード:{" "}
-                <span className="font-bold text-slate-700">
+                <span className="font-black text-slate-700">
                   {nodes.find((n) => n.id === newNodeParentIdInput)?.label || "なし（Root）"}
                 </span>
               </div>
               <button
                 type="submit"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-2 rounded-xl text-xs transition shadow"
               >
                 ノードをマップに追加
               </button>
@@ -1308,64 +1872,75 @@ export default function Home() {
         </div>
       )}
 
-      {/* 5. DEDICATED PRINT LAYOUT CONTAINER */}
-      {printLog && (
-        <div className="print-only">
-          <div className="border-b-4 border-slate-900 pb-4 mb-6">
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">
-              進捗報告資料：マップ型 思考ログ
-            </h1>
-            <div className="flex justify-between items-center text-xs text-slate-500 mt-2 font-semibold">
-              <span>プロジェクト: {selectedProject?.title}</span>
-              <span>報告作成日時: {new Date(printLog.createdAt).toLocaleDateString("ja-JP")}</span>
-            </div>
-          </div>
-
-          <div className="space-y-8">
-            {/* 1. Conclusion */}
-            <div className="p-5 border-2 border-emerald-500 rounded-xl bg-emerald-50/10">
-              <h2 className="text-sm font-black text-emerald-800 tracking-wider border-b border-emerald-200 pb-1.5 mb-3 uppercase">
-                1. 今週の進捗・結論要約
-              </h2>
-              <p className="text-sm text-slate-800 font-bold leading-relaxed whitespace-pre-wrap">
-                {printLog.conclusion}
-              </p>
+      {/* COLLECTIVE SUMMARY RESULT MODAL */}
+      {collectiveSummaryResult && (
+        <div className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-lg w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="font-black text-slate-800 flex items-center gap-2 text-sm">
+                <Sparkles className="w-5 h-5 text-indigo-600 animate-pulse" />
+                <span>選択した {checkedLogIds.size} 件の進捗：一括要約結果</span>
+              </h3>
+              <button
+                onClick={() => setCollectiveSummaryResult(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
 
-            {/* 2. Struggle */}
-            <div className="p-5 border-2 border-amber-500 rounded-xl bg-amber-50/10">
-              <h2 className="text-sm font-black text-amber-800 tracking-wider border-b border-amber-200 pb-1.5 mb-3 uppercase">
-                2. 葛藤と試行錯誤プロセス（本音、省略せず残す箇所）
-              </h2>
-              <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
-                {printLog.struggle}
-              </p>
+            <div className="space-y-4 text-xs leading-relaxed max-h-[400px] overflow-y-auto pr-2">
+              {/* Conclusion */}
+              <div className="space-y-1 bg-emerald-50/40 p-3 rounded-xl border border-emerald-100">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block">
+                  ① 統合された結論・成果
+                </span>
+                <p className="font-bold text-slate-800 whitespace-pre-wrap">
+                  {collectiveSummaryResult.conclusion}
+                </p>
+              </div>
+
+              {/* Struggle */}
+              <div className="space-y-1 bg-amber-50/40 p-3 rounded-xl border border-amber-100">
+                <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
+                  ② 統合された葛藤とプロセス
+                </span>
+                <p className="text-slate-700 whitespace-pre-wrap">
+                  {collectiveSummaryResult.struggle}
+                </p>
+              </div>
+
+              {/* Discussion */}
+              <div className="space-y-1 bg-indigo-50/40 p-3 rounded-xl border border-indigo-100">
+                <span className="text-[10px] font-black text-indigo-800 uppercase tracking-wider block">
+                  ③ 統合された今後の相談テーマ
+                </span>
+                <p className="font-bold text-slate-900 italic whitespace-pre-wrap">
+                  ❓ {collectiveSummaryResult.discussion}
+                </p>
+              </div>
             </div>
 
-            {/* 3. Discussion */}
-            <div className="p-5 border-2 border-indigo-500 rounded-xl bg-indigo-50/10">
-              <h2 className="text-sm font-black text-indigo-800 tracking-wider border-b border-indigo-200 pb-1.5 mb-3 uppercase">
-                3. 今後の相談・議論のテーマ
-              </h2>
-              <p className="text-sm text-slate-800 font-bold leading-relaxed whitespace-pre-wrap">
-                {printLog.discussion}
-              </p>
+            <div className="flex justify-end pt-2 border-t">
+              <button
+                onClick={() => setCollectiveSummaryResult(null)}
+                className="bg-slate-900 hover:bg-slate-800 text-white font-black text-xs px-5 py-2 rounded-xl shadow transition"
+              >
+                閉じる
+              </button>
             </div>
-          </div>
-
-          <div className="mt-12 pt-6 border-t border-slate-200 text-center text-[10px] text-slate-400">
-            マップ型 思考ログ構築システムにより自動生成・管理
           </div>
         </div>
       )}
 
-      {/* 6. TOAST NOTIFICATIONS (NO-PRINT) */}
+      {/* TOAST NOTIFICATION MESSAGE */}
       {toastMessage && (
-        <div className="no-print fixed bottom-6 right-6 bg-slate-900/95 backdrop-blur-sm text-white text-xs px-4 py-3 rounded-xl shadow-xl z-50 flex items-center gap-2 border border-slate-800 animate-slideUp">
+        <div className="no-print fixed bottom-6 right-6 bg-slate-950/95 backdrop-blur-sm text-white text-xs px-4 py-3 rounded-xl shadow-xl z-50 flex items-center gap-2 border border-slate-800 animate-slideUp font-bold">
           <Sparkles className="w-4 h-4 text-emerald-400" />
-          <span className="font-semibold">{toastMessage}</span>
+          <span>{toastMessage}</span>
         </div>
       )}
+
     </div>
   );
 }

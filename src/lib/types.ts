@@ -20,4 +20,5 @@ export interface ProgressLog {
   struggle: string;
   discussion: string;
   createdAt: number;
+  talked?: boolean; // 話済み or まだ話していない
 }

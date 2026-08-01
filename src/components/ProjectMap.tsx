@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   MiniMap,
@@ -21,9 +21,9 @@ interface ProjectMapProps {
   isCreator: boolean;
   onAddChildNode?: (parentId: string) => void;
   onDeleteNode?: (nodeId: string) => void;
+  unspokenNodeIds?: Set<string>; // ノード内の未報告ログの有無
 }
 
-// Custom Node component or custom styled nodes
 export default function ProjectMap({
   nodesList,
   currentNodeId,
@@ -31,9 +31,38 @@ export default function ProjectMap({
   isCreator,
   onAddChildNode,
   onDeleteNode,
+  unspokenNodeIds = new Set(),
 }: ProjectMapProps) {
   const [rfNodes, setRFNodes, onNodesChange] = useNodesState<any>([]);
   const [rfEdges, setRFEdges, onEdgesChange] = useEdgesState<any>([]);
+
+  // Track collapsed node IDs
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
+
+  // Determine which nodes actually have children in the original nodesList
+  const nodesWithChildren = useMemo(() => {
+    const set = new Set<string>();
+    nodesList.forEach((n) => {
+      if (n.parentId) {
+        set.add(n.parentId);
+      }
+    });
+    return set;
+  }, [nodesList]);
+
+  // Handle collapsing toggle
+  const toggleCollapse = (nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Avoid triggering node select
+    setCollapsedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  };
 
   // Simple layout engine to arrange nodes in a clean tree structure
   const { computedNodes, computedEdges } = useMemo(() => {
@@ -41,11 +70,23 @@ export default function ProjectMap({
       return { computedNodes: [], computedEdges: [] };
     }
 
-    // Map parent to children
+    // Helper to recursively check if an ancestor is collapsed
+    const isNodeVisible = (nodeId: string): boolean => {
+      const n = nodesList.find((item) => item.id === nodeId);
+      if (!n) return false;
+      if (!n.parentId) return true;
+      if (collapsedNodeIds.has(n.parentId)) return false;
+      return isNodeVisible(n.parentId);
+    };
+
+    // Filter only visible nodes
+    const visibleNodes = nodesList.filter((node) => isNodeVisible(node.id));
+
+    // Map parent to children for visible nodes
     const parentToChildren: Record<string, ProjectNode[]> = {};
     const rootNodes: ProjectNode[] = [];
 
-    nodesList.forEach((node) => {
+    visibleNodes.forEach((node) => {
       if (!node.parentId) {
         rootNodes.push(node);
       } else {
@@ -56,9 +97,9 @@ export default function ProjectMap({
       }
     });
 
-    // If no explicit root nodes, treat first node as root
-    if (rootNodes.length === 0 && nodesList.length > 0) {
-      rootNodes.push(nodesList[0]);
+    // If no explicit root nodes, treat first visible node as root
+    if (rootNodes.length === 0 && visibleNodes.length > 0) {
+      rootNodes.push(visibleNodes[0]);
     }
 
     const nodePositions: Record<string, { x: number; y: number }> = {};
@@ -95,8 +136,11 @@ export default function ProjectMap({
     });
 
     // Format nodes for React Flow
-    const formattedNodes = nodesList.map((node) => {
+    const formattedNodes = visibleNodes.map((node) => {
       const isCurrent = node.id === currentNodeId;
+      const isUnspoken = unspokenNodeIds.has(node.id);
+      const isCollapsed = collapsedNodeIds.has(node.id);
+      const hasChildren = nodesWithChildren.has(node.id);
       const pos = nodePositions[node.id] || { x: 0, y: 0 };
 
       return {
@@ -104,15 +148,40 @@ export default function ProjectMap({
         position: pos,
         data: {
           label: (
-            <div className="relative group p-2 text-center">
+            <div className="relative group p-2 text-center select-none">
               <div className="font-semibold text-xs text-gray-800 break-words max-w-[180px]">
                 {node.label}
               </div>
+
+              {/* Expand / Collapse Indicator Button */}
+              {hasChildren && (
+                <button
+                  onClick={(e) => toggleCollapse(node.id, e)}
+                  className={`absolute -top-3.5 right-4 w-5 h-5 flex items-center justify-center text-[10px] font-black rounded-full shadow-sm transition-all duration-200 border ${
+                    isCollapsed
+                      ? "bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700"
+                      : "bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200"
+                  }`}
+                  title={isCollapsed ? "展開する" : "折りたたむ"}
+                >
+                  {isCollapsed ? "＋" : "－"}
+                </button>
+              )}
+
+              {/* Status Indicator Badges */}
               {isCurrent && (
-                <span className="absolute -top-3 -right-2 bg-emerald-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm animate-bounce">
+                <span className="absolute -top-3 -right-2 bg-emerald-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-sm animate-bounce">
                   現在地
                 </span>
               )}
+
+              {isUnspoken && !isCurrent && (
+                <span className="absolute -top-3 -left-2 bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow-sm">
+                  未報告
+                </span>
+              )}
+
+              {/* Creator controls */}
               {isCreator && node.id !== "node-root" && onDeleteNode && (
                 <button
                   onClick={(e) => {
@@ -133,7 +202,7 @@ export default function ProjectMap({
                     e.stopPropagation();
                     onAddChildNode(node.id);
                   }}
-                  className="absolute -bottom-3 left-1/2 -translate-x-1/2 hidden group-hover:flex bg-blue-500 hover:bg-blue-600 text-white rounded-full px-1.5 py-0.5 items-center justify-center text-[10px] font-bold transition shadow whitespace-nowrap"
+                  className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 hidden group-hover:flex bg-blue-500 hover:bg-blue-600 text-white rounded-full px-1.5 py-0.5 items-center justify-center text-[9px] font-bold transition shadow whitespace-nowrap"
                   title="子ノードを追加"
                 >
                   + 子ノード
@@ -145,13 +214,19 @@ export default function ProjectMap({
         style: {
           background: isCurrent
             ? "#ecfdf5" // light emerald
+            : isUnspoken
+            ? "#fffbeb" // light amber
             : "#ffffff",
           border: isCurrent
             ? "2px solid #10b981" // emerald-500
+            : isUnspoken
+            ? "2px dashed #f59e0b" // amber dashed
             : "1px solid #e5e7eb",
           borderRadius: "8px",
           boxShadow: isCurrent
             ? "0 4px 12px rgba(16, 185, 129, 0.2)"
+            : isUnspoken
+            ? "0 4px 10px rgba(245, 158, 11, 0.15)"
             : "0 2px 6px rgba(0,0,0,0.05)",
           color: "#1f2937",
           cursor: "pointer",
@@ -164,8 +239,8 @@ export default function ProjectMap({
 
     // Format edges for React Flow
     const formattedEdges: any[] = [];
-    nodesList.forEach((node) => {
-      if (node.parentId && nodesList.some((n) => n.id === node.parentId)) {
+    visibleNodes.forEach((node) => {
+      if (node.parentId && visibleNodes.some((n) => n.id === node.parentId)) {
         formattedEdges.push({
           id: `e-${node.parentId}-${node.id}`,
           source: node.parentId,
@@ -187,7 +262,7 @@ export default function ProjectMap({
     });
 
     return { computedNodes: formattedNodes, computedEdges: formattedEdges };
-  }, [nodesList, currentNodeId, isCreator, onAddChildNode, onDeleteNode]);
+  }, [nodesList, currentNodeId, isCreator, onAddChildNode, onDeleteNode, collapsedNodeIds, nodesWithChildren, unspokenNodeIds]);
 
   useEffect(() => {
     setRFNodes(computedNodes);
@@ -223,8 +298,12 @@ export default function ProjectMap({
           <span>現在地ノード（今週の進捗箇所）</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 bg-white border border-slate-300 rounded-sm"></span>
-          <span>その他の関連ノード</span>
+          <span className="inline-block w-3.5 h-3.5 bg-amber-50 border-2 border-dashed border-amber-500 rounded-sm"></span>
+          <span>未報告ログが存在するノード</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block w-3.5 h-3.5 bg-indigo-600 rounded-full flex items-center justify-center text-[8px] text-white">＋</span>
+          <span>折りたたまれた子ノードあり（クリックで展開）</span>
         </div>
         {isCreator && (
           <div className="text-[10px] text-blue-600 font-medium pt-0.5">
