@@ -113,7 +113,7 @@ export default function Home() {
   const loadProjects = async () => {
     setIsLoadingData(true);
     try {
-      const list = await dbService.getProjects();
+      const list = await dbService.getProjects(storageMode);
       setProjects(list);
       if (list.length > 0) {
         // Find if a project was already selected, or default to the first
@@ -136,8 +136,8 @@ export default function Home() {
 
   const loadProjectDetails = async (projId: string) => {
     try {
-      const fetchedNodes = await dbService.getNodes(projId);
-      const fetchedLogs = await dbService.getLogs(projId);
+      const fetchedNodes = await dbService.getNodes(storageMode, projId);
+      const fetchedLogs = await dbService.getLogs(storageMode, projId);
       setNodes(fetchedNodes);
       setLogs(fetchedLogs);
 
@@ -240,13 +240,13 @@ export default function Home() {
     if (!newProjectTitle.trim()) return;
 
     try {
-      const proj = await dbService.createProject(newProjectTitle.trim());
+      const proj = await dbService.createProject(storageMode, newProjectTitle.trim());
       setNewProjectTitle("");
       setShowAddProjectModal(false);
       showToast(`プロジェクト「${proj.title}」を作成しました。`);
 
       // Reload projects list and force select the new one
-      const list = await dbService.getProjects();
+      const list = await dbService.getProjects(storageMode);
       setProjects(list);
       const created = list.find((p) => p.id === proj.id);
       if (created) {
@@ -270,9 +270,10 @@ export default function Home() {
 
     try {
       const node = await dbService.createNode(
+        storageMode,
         selectedProject.id,
         newNodeLabelInput.trim(),
-        newNodeParentIdInput
+        newNodeParentIdInput || null
       );
       showToast(`ノード「${node.label}」をマップに追加しました。`);
       setShowAddNodeModal(false);
@@ -293,11 +294,11 @@ export default function Home() {
       // Update immediate child nodes
       const children = nodes.filter((n) => n.parentId === nodeId);
       for (const child of children) {
-        await dbService.updateNode(selectedProject.id, child.id, { parentId });
+        await dbService.updateNode(storageMode, selectedProject.id, child.id, { parentId });
       }
 
       // Delete the node
-      await dbService.deleteNode(selectedProject.id, nodeId);
+      await dbService.deleteNode(storageMode, selectedProject.id, nodeId);
 
       // Re-map logs belonging to this node to "node-root" or nearest parent
       const rootNode = nodes.find((n) => n.parentId === null) || nodes[0];
@@ -305,7 +306,7 @@ export default function Home() {
       const affectedLogs = logs.filter((log) => log.nodeId === nodeId);
 
       for (const log of affectedLogs) {
-        await dbService.updateLog(selectedProject.id, log.id, { nodeId: fallbackNodeId });
+        await dbService.updateLog(storageMode, selectedProject.id, log.id, { nodeId: fallbackNodeId });
       }
 
       showToast("ノードを削除し、配下の子ノードと進捗ログを再配置しました。");
@@ -320,7 +321,7 @@ export default function Home() {
     if (!selectedProject || !selectedNodeId || !nodeRenameInput.trim()) return;
 
     try {
-      await dbService.updateNode(selectedProject.id, selectedNodeId, {
+      await dbService.updateNode(storageMode, selectedProject.id, selectedNodeId, {
         label: nodeRenameInput.trim(),
       });
       showToast("ノード名を変更しました。");
@@ -336,7 +337,7 @@ export default function Home() {
 
     const newParent = nodeNewParentId === "null" ? null : nodeNewParentId;
     try {
-      await dbService.updateNode(selectedProject.id, selectedNodeId, {
+      await dbService.updateNode(storageMode, selectedProject.id, selectedNodeId, {
         parentId: newParent,
       });
       showToast("ノードの親子関係（マッピング構造）を変更しました。");
@@ -351,7 +352,7 @@ export default function Home() {
     if (!selectedProject) return;
     const nextStatus = !log.talked;
     try {
-      await dbService.updateLog(selectedProject.id, log.id, { talked: nextStatus });
+      await dbService.updateLog(storageMode, selectedProject.id, log.id, { talked: nextStatus });
       setLogs((prev) =>
         prev.map((l) => (l.id === log.id ? { ...l, talked: nextStatus } : l))
       );
@@ -369,7 +370,7 @@ export default function Home() {
     if (!selectedProject) return;
     if (confirm("この進捗ログを削除しますか？この操作は取り消せません。")) {
       try {
-        await dbService.deleteLog(selectedProject.id, logId);
+        await dbService.deleteLog(storageMode, selectedProject.id, logId);
         showToast("進捗ログを削除しました。");
         await loadProjectDetails(selectedProject.id);
       } catch (err) {
@@ -393,7 +394,7 @@ export default function Home() {
     if (!selectedProject) return;
 
     try {
-      await dbService.updateLog(selectedProject.id, logId, {
+      await dbService.updateLog(storageMode, selectedProject.id, logId, {
         situation: editSituation,
         task: editTask,
         action: editAction,
@@ -497,6 +498,7 @@ export default function Home() {
         if (item.mappingType === "new" && item.newNodeLabel.trim()) {
           const parentId = item.newNodeParentId === "node-root" || !item.newNodeParentId ? null : item.newNodeParentId;
           const createdNode = await dbService.createNode(
+            storageMode,
             selectedProject.id,
             item.newNodeLabel.trim(),
             parentId
@@ -505,7 +507,7 @@ export default function Home() {
         }
 
         // Save progress log
-        await dbService.createLog(
+        await dbService.createLog(storageMode,
           selectedProject.id,
           finalNodeId || (nodes.length > 0 ? nodes[0].id : "node-root"),
           rawMemo,
@@ -1162,13 +1164,14 @@ JSONスキーマ:
                                         if (item.mappingType === "new" && item.newNodeLabel.trim()) {
                                           const parent = item.newNodeParentId === "node-root" || !item.newNodeParentId ? null : item.newNodeParentId;
                                           const created = await dbService.createNode(
+                                            storageMode,
                                             selectedProject!.id,
                                             item.newNodeLabel.trim(),
                                             parent
                                           );
                                           finalId = created.id;
                                         }
-                                        await dbService.createLog(
+                                        await dbService.createLog(storageMode,
                                           selectedProject!.id,
                                           finalId || (nodes.length > 0 ? nodes[0].id : "node-root"),
                                           rawMemo,
