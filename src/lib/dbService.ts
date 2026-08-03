@@ -8,7 +8,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { Project, ProjectNode, ProgressLog } from "./types";
-import { supabase } from "./supabase";
+import { getSupabase } from "./supabase";
 export type DBMode = "firebase" | "mock" | "supabase";
 
 // Key for storage mode preference
@@ -121,6 +121,23 @@ export const dbService = {
   // PROJECTS
   async getProjects(mode: DBMode = "mock"): Promise<Project[]> {
 
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { data, error } = await supa.from("projects").select("*").order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data || []).map(d => ({
+          id: d.id,
+          title: d.title,
+          createdAt: new Date(d.created_at).getTime(),
+          updatedAt: new Date(d.updated_at).getTime(),
+        }));
+      } catch (err) {
+        console.error("Supabase getProjects error", err);
+      }
+    }
+
     if (mode === "firebase" && db) {
       try {
         const querySnapshot = await getDocs(collection(db, "projects"));
@@ -167,9 +184,11 @@ export const dbService = {
       updatedAt: Date.now(),
     };
 
-    if (mode === "supabase" && supabase) {
+    if (mode === "supabase" && getSupabase()) {
       try {
-        const { error } = await supabase.from("projects").insert({
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("projects").insert({
           id,
           title,
           created_at: new Date(newProj.createdAt).toISOString(),
@@ -204,6 +223,22 @@ export const dbService = {
 
   // NODES
   async getNodes(mode: DBMode = "mock", projectId: string): Promise<ProjectNode[]> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { data, error } = await supa.from("nodes").select("*").eq("project_id", projectId).order("created_at", { ascending: true });
+        if (error) throw error;
+        return (data || []).map(d => ({
+          id: d.id,
+          parentId: d.parent_id,
+          label: d.label,
+          createdAt: new Date(d.created_at).getTime(),
+        }));
+      } catch (err) {
+        console.error("Supabase getNodes error", err);
+      }
+    }
 
     if (mode === "firebase" && db) {
       try {
@@ -238,9 +273,11 @@ export const dbService = {
       createdAt: Date.now(),
     };
 
-    if (mode === "supabase" && supabase) {
+    if (mode === "supabase" && getSupabase()) {
       try {
-        const { error } = await supabase.from("nodes").insert({
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("nodes").insert({
           id,
           project_id: projectId,
           parent_id: parentId,
@@ -276,13 +313,14 @@ export const dbService = {
   },
 
   async updateNode(mode: DBMode = "mock", projectId: string, nodeId: string, fields: Partial<Omit<ProjectNode, "id" | "createdAt">>): Promise<void> {
-    if (mode === "supabase" && supabase) {
+    if (mode === "supabase" && getSupabase()) {
       try {
         const payload: any = {};
         if (fields.label !== undefined) payload.label = fields.label;
         if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
-        const { error } = await supabase
-          .from("nodes")
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("nodes")
           .update(payload)
           .eq("id", nodeId)
           .eq("project_id", projectId);
@@ -313,9 +351,11 @@ export const dbService = {
   },
 
   async deleteNode(mode: DBMode = "mock", projectId: string, nodeId: string): Promise<void> {
-    if (mode === "supabase" && supabase) {
+    if (mode === "supabase" && getSupabase()) {
       try {
-        const { error } = await supabase.from("nodes").delete().eq("id", nodeId).eq("project_id", projectId);
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("nodes").delete().eq("id", nodeId).eq("project_id", projectId);
         if (error) throw error;
       } catch (err) {
         console.error("Supabase deleteNode error", err);
@@ -340,6 +380,29 @@ export const dbService = {
 
   // LOGS
   async getLogs(mode: DBMode = "mock", projectId: string): Promise<ProgressLog[]> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { data, error } = await supa.from("logs").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data || []).map(d => ({
+          id: d.id,
+          nodeId: d.node_id,
+          rawMemo: d.raw_memo,
+          situation: d.situation,
+          task: d.task,
+          action: d.action,
+          result: d.result,
+          question: d.question,
+          nextTodo: d.next_todo,
+          talked: d.talked,
+          createdAt: new Date(d.created_at).getTime(),
+        }));
+      } catch (err) {
+        console.error("Supabase getLogs error", err);
+      }
+    }
 
     if (mode === "firebase" && db) {
       try {
@@ -433,7 +496,7 @@ export const dbService = {
   },
 
     async updateLog(mode: DBMode = "mock", projectId: string, logId: string, updateData: Partial<Omit<ProgressLog, "id" | "createdAt">>): Promise<void> {
-    if (mode === "supabase" && supabase) {
+    if (mode === "supabase" && getSupabase()) {
       try {
         const updatePayload: any = {};
         if (updateData.nodeId !== undefined) updatePayload.node_id = updateData.nodeId;
@@ -446,8 +509,9 @@ export const dbService = {
         if (updateData.nextTodo !== undefined) updatePayload.next_todo = updateData.nextTodo;
         if (updateData.talked !== undefined) updatePayload.talked = updateData.talked;
 
-        const { error } = await supabase
-          .from("logs")
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("logs")
           .update(updatePayload)
           .eq("id", logId)
           .eq("project_id", projectId);
@@ -478,9 +542,11 @@ export const dbService = {
   },
 
   async deleteLog(mode: DBMode = "mock", projectId: string, logId: string): Promise<void> {
-    if (mode === "supabase" && supabase) {
+    if (mode === "supabase" && getSupabase()) {
       try {
-        const { error } = await supabase.from("logs").delete().eq("id", logId).eq("project_id", projectId);
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("logs").delete().eq("id", logId).eq("project_id", projectId);
         if (error) throw error;
       } catch (err) {
         console.error("Supabase deleteLog error", err);

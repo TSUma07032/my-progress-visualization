@@ -13,28 +13,40 @@ interface AppContextType {
   lockCreator: () => void;
   saveGeminiApiKey: (key: string) => void;
   clearGeminiApiKey: () => void;
+  supabaseUrl: string;
+  supabaseKey: string;
+  saveSupabaseConfig: (url: string, key: string) => void;
+  clearSupabaseConfig: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 const GEMINI_KEY_STORAGE = "map_thinking_log_gemini_key";
 const CREATOR_ROLE_STORAGE = "map_thinking_log_is_creator";
+const SUPABASE_URL_STORAGE = "map_thinking_log_supabase_url";
+const SUPABASE_KEY_STORAGE = "map_thinking_log_supabase_key";
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isCreator, setIsCreator] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [storageMode, setStorageModeState] = useState<"firebase" | "mock" | "supabase">("mock");
   const [isMounted, setIsMounted] = useState(false);
+  const [supabaseUrl, setSupabaseUrl] = useState("");
+  const [supabaseKey, setSupabaseKey] = useState("");
 
   // Initialize values on mount to prevent SSR hydration mismatches
   useEffect(() => {
     const storedApiKey = localStorage.getItem(GEMINI_KEY_STORAGE) || "";
     const storedCreator = localStorage.getItem(CREATOR_ROLE_STORAGE) === "true";
     const storedMode = getStoragePreference();
+    const storedSupabaseUrl = localStorage.getItem(SUPABASE_URL_STORAGE) || "";
+    const storedSupabaseKey = localStorage.getItem(SUPABASE_KEY_STORAGE) || "";
 
     setGeminiApiKey(storedApiKey);
     setIsCreator(storedCreator);
     setStorageModeState(storedMode);
+    setSupabaseUrl(storedSupabaseUrl);
+    setSupabaseKey(storedSupabaseKey);
     setIsMounted(true);
   }, []);
 
@@ -78,6 +90,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(GEMINI_KEY_STORAGE);
   };
 
+  const saveSupabaseConfig = (url: string, key: string) => {
+    setSupabaseUrl(url);
+    setSupabaseKey(key);
+    localStorage.setItem(SUPABASE_URL_STORAGE, url);
+    localStorage.setItem(SUPABASE_KEY_STORAGE, key);
+  };
+
+  const clearSupabaseConfig = () => {
+    setSupabaseUrl("");
+    setSupabaseKey("");
+    localStorage.removeItem(SUPABASE_URL_STORAGE);
+    localStorage.removeItem(SUPABASE_KEY_STORAGE);
+  };
+
   return (
     <AppContext.Provider
       value={{
@@ -90,6 +116,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         lockCreator,
         saveGeminiApiKey,
         clearGeminiApiKey,
+        supabaseUrl,
+        supabaseKey,
+        saveSupabaseConfig,
+        clearSupabaseConfig,
       }}
     >
       {children}
