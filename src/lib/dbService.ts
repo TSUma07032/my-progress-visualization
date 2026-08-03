@@ -20,6 +20,9 @@ export function getStoragePreference(): "firebase" | "mock" | "supabase" {
   if (pref === "firebase" && hasFirebaseConfig) {
     return "firebase";
   }
+  if (pref === "supabase" && getSupabase()) {
+    return "supabase";
+  }
   return "mock";
 }
 
@@ -315,7 +318,7 @@ export const dbService = {
   async updateNode(mode: DBMode = "mock", projectId: string, nodeId: string, fields: Partial<Omit<ProjectNode, "id" | "createdAt">>): Promise<void> {
     if (mode === "supabase" && getSupabase()) {
       try {
-        const payload: any = {};
+        const payload: Record<string, unknown> = {};
         if (fields.label !== undefined) payload.label = fields.label;
         if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
         const supa = getSupabase();
@@ -468,6 +471,31 @@ export const dbService = {
     };
 
 
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("logs").insert({
+          id,
+          project_id: projectId,
+          node_id: nodeId,
+          raw_memo: rawMemo,
+          situation,
+          task,
+          action,
+          result,
+          question: question || null,
+          next_todo: nextTodo || null,
+          talked: isTalked,
+          created_at: new Date(createdAt).toISOString(),
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase createLog error", err);
+      }
+      return newLog;
+    }
+
     if (mode === "firebase" && db) {
       try {
         await setDoc(doc(db, "projects", projectId, "logs", id), {
@@ -498,7 +526,7 @@ export const dbService = {
     async updateLog(mode: DBMode = "mock", projectId: string, logId: string, updateData: Partial<Omit<ProgressLog, "id" | "createdAt">>): Promise<void> {
     if (mode === "supabase" && getSupabase()) {
       try {
-        const updatePayload: any = {};
+        const updatePayload: Record<string, unknown> = {};
         if (updateData.nodeId !== undefined) updatePayload.node_id = updateData.nodeId;
         if (updateData.rawMemo !== undefined) updatePayload.raw_memo = updateData.rawMemo;
         if (updateData.situation !== undefined) updatePayload.situation = updateData.situation;
@@ -525,7 +553,7 @@ export const dbService = {
         if (mode === "firebase" && db) {
       try {
         const docRef = doc(db, "projects", projectId, "logs", logId);
-        await updateDoc(docRef, updateData as any);
+        await updateDoc(docRef, updateData as Record<string, unknown>);
         return;
       } catch (err) {
         console.error("Firestore updateLog failed", err);
