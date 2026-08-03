@@ -10,7 +10,7 @@ interface NodeItem {
 
 export async function POST(request: Request) {
   try {
-    const { rawMemo, nodes, apiKey, useSimulation } = await request.json();
+    const { rawMemo, nodes, apiKey, useSimulation, chatHistory } = await request.json();
 
     if (useSimulation || !apiKey) {
       const simulatedResult = generateSimulatedResponse(rawMemo, nodes);
@@ -26,40 +26,79 @@ export async function POST(request: Request) {
           responseSchema: {
             type: SchemaType.OBJECT, // 👇 修正: SchemaTypeを使用
             properties: {
-              conclusion: {
-                type: SchemaType.STRING,
-                description: "今週の成果や進捗を簡潔に要約（1〜2行）。",
+              isSufficient: {
+                type: SchemaType.BOOLEAN,
+                description: "入力されたメモ（およびチャット履歴）から、STAR法（Situation, Task, Action, Result）を満たす十分な情報が抽出できるかどうか。情報が足りない（例：行動だけ書いてあって結果がない、状況が不明など）場合は false にする。",
               },
-              struggle: {
+              clarificationQuestion: {
                 type: SchemaType.STRING,
-                description: "ユーザーの悩み、エラー、失敗談、疑問などを意図的に残した、綺麗に丸め込まない試行錯誤の要約。",
-              },
-              discussion: {
-                type: SchemaType.STRING,
-                description: "報告相手（教授や上司）へ相談すべき具体的な問いの提案。",
-              },
-              nodeId: {
-                type: SchemaType.STRING,
-                description: "提供された既存ノードリストの中で、入力内容が最も該当するノードのID。該当する既存ノードがない場合は null または空文字にしてください。",
-                nullable: true, // 👇 念のためnullを許容する設定を追加
-              },
-              newNodeLabel: {
-                type: SchemaType.STRING,
-                description: "既存ノードに該当しない新規トピックだと判断した場合に、新しく作成するノードの表示名（例:『実験2：パラメータチューニング』）。新規作成しない場合は null または空文字にしてください。",
+                description: "isSufficient が false の場合、ユーザーに足りない情報（ActionやResultなど）を聞き出すための質問文。isSufficientがtrueの場合はnull。",
                 nullable: true,
               },
-              newNodeParentId: {
-                type: SchemaType.STRING,
-                description: "新規ノードを作成する場合、その親となる既存ノードのID。ルートレベルに追加する場合は null または空文字にしてください。",
-                nullable: true,
-              },
+              items: {
+                type: SchemaType.ARRAY,
+                description: "抽出された進捗データの配列。isSufficient が false の場合は空配列でよい。",
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    situation: {
+                      type: SchemaType.STRING,
+                      description: "Situation (状況): 現在の状況や背景",
+                    },
+                    task: {
+                      type: SchemaType.STRING,
+                      description: "Task (課題): 取り組むべき課題、目標",
+                    },
+                    action: {
+                      type: SchemaType.STRING,
+                      description: "Action (行動): 具体的に何を行ったか（エラーや試行錯誤のプロセスも含む）",
+                    },
+                    result: {
+                      type: SchemaType.STRING,
+                      description: "Result (結果): その結果どうなったか、成果や新たな気づき",
+                    },
+                    question: {
+                      type: SchemaType.STRING,
+                      description: "Question (疑問・相談): 報告相手（教授や上司）へ相談すべき具体的な問いの提案。",
+                      nullable: true,
+                    },
+                    nextTodo: {
+                      type: SchemaType.STRING,
+                      description: "Next (次のTodo): 次に取り組むべきこと",
+                      nullable: true,
+                    },
+                    nodeId: {
+                      type: SchemaType.STRING,
+                      description: "提供された既存ノードリストの中で、入力内容が最も該当するノードのID。該当する既存ノードがない場合は null または空文字にしてください。",
+                      nullable: true,
+                    },
+                    newNodeLabel: {
+                      type: SchemaType.STRING,
+                      description: "既存ノードに該当しない新規トピックだと判断した場合に、新しく作成するノードの表示名（例:『実験2：パラメータチューニング』）。新規作成しない場合は null または空文字にしてください。",
+                      nullable: true,
+                    },
+                    newNodeParentId: {
+                      type: SchemaType.STRING,
+                      description: "新規ノードを作成する場合、その親となる既存ノードのID。ルートレベルに追加する場合は null または空文字にしてください。",
+                      nullable: true,
+                    },
+                  },
+                  required: ["situation", "task", "action", "result"],
+                }
+              }
             },
-            required: ["conclusion", "struggle", "discussion"],
+            required: ["isSufficient"],
           },
         },
       });
 
-      const systemPrompt = `あなたは研究・プロジェクトの編集者です。ユーザーの入力メモから情報を抽出する際、文章を綺麗に要約して成功体験だけにするのは厳禁です。ユーザーが悩んでいること、試行錯誤したプロセス、目的とのズレに対する違和感などを『葛藤・議論のタネ』として絶対に省略せず、強調して抽出してください。また、入力メモに複数のトピックや非常に多くの内容が含まれる場合は、それぞれを適切な「items」要素に分割して出力してください。`;
+      const systemPrompt = `あなたは研究・プロジェクトの編集者です。ユーザーの入力メモ（およびチャット履歴）から、進捗をSTAR法（Situation:状況、Task:課題、Action:行動、Result:結果）を用いて抽出してください。
+
+重要ルール：
+1. ユーザーが悩んでいること、エラー、試行錯誤したプロセスは「Action(行動)」や「Result(結果)」に詳細に残してください。綺麗に成功体験だけに要約してはいけません。
+2. もし入力内容からSTARの4要素（状況、課題、行動、結果）を十分に抽出できない場合（例：何をやったか（Action）しか書かれていない、結果が不明など）は、isSufficientをfalseにし、不足している情報を聞き出すための親しみやすい質問をclarificationQuestionに設定してください。
+3. 十分な情報があればisSufficientをtrueにし、itemsにSTARデータを格納します。入力メモに複数の独立したトピックが含まれる場合は、items配列に複数要素として分割して出力してください。
+`;
 
       const prompt = `
 ${systemPrompt}
@@ -67,12 +106,15 @@ ${systemPrompt}
 既存のノードリスト:
 ${JSON.stringify(nodes, null, 2)}
 
+これまでのチャット履歴:
+${chatHistory && chatHistory.length > 0 ? chatHistory.map((msg: any) => `${msg.role === 'user' ? 'ユーザー' : 'あなた'}: ${msg.content}`).join('\n') : 'なし'}
+
 ユーザーの入力メモ:
 ---
 ${rawMemo}
 ---
 
-上記メモを分析し、指示に従ってJSON（itemsの配列を含むオブジェクト）を出力してください。
+上記の内容を分析し、指示に従ってJSONを出力してください。
 `;
 
       const response = await model.generateContent({
@@ -85,10 +127,22 @@ ${rawMemo}
 
       const parsed = JSON.parse(text);
 
+      if (!parsed.isSufficient) {
+         return NextResponse.json({
+            isSufficient: false,
+            clarificationQuestion: parsed.clarificationQuestion || "もう少し詳しく教えてもらえますか？",
+            items: [],
+            isSimulated: false,
+         });
+      }
+
       const items = (parsed.items || []).map((item: any) => ({
-        conclusion: item.conclusion || "",
-        struggle: item.struggle || "",
-        discussion: item.discussion || "",
+        situation: item.situation || "",
+        task: item.task || "",
+        action: item.action || "",
+        result: item.result || "",
+        question: item.question || "",
+        nextTodo: item.nextTodo || "",
         nodeId: item.nodeId || null,
         newNodeLabel: item.newNodeLabel || null,
         newNodeParentId: item.newNodeParentId || null,
@@ -97,9 +151,10 @@ ${rawMemo}
       // Fallback if array is empty
       if (items.length === 0) {
         items.push({
-          conclusion: "進捗要約の取得に失敗しました。",
-          struggle: "詳細な葛藤は抽出されませんでした。",
-          discussion: "進捗の報告方法について。",
+          situation: "不明",
+          task: "不明",
+          action: "不明",
+          result: "抽出失敗",
           nodeId: null,
           newNodeLabel: "未分類 (Uncategorized)",
           newNodeParentId: null,
@@ -107,6 +162,7 @@ ${rawMemo}
       }
 
       return NextResponse.json({
+        isSufficient: true,
         items,
         isSimulated: false,
       });
@@ -140,22 +196,17 @@ function generateSimulatedResponse(rawMemo: string, nodes: NodeItem[]) {
   const shouldSplit = memoText.length > 150 || lines.filter(l => l.startsWith("-") || l.startsWith("*") || l.match(/^\d+\./)).length >= 2;
 
   const createItem = (textSource: string[], itemIndex: number) => {
-    let conclusion = `進捗メモから抽出されたテーマ ${itemIndex + 1} の要約。`;
-    let struggle = "明確なエラーや葛藤は検知されませんでしたが、開発作業が継続しています。";
-    let discussion = "今後のマイルストーンおよび優先順位について。";
-
-    // Search keywords for struggle
-    const struggleKeywords = ["エラー", "バグ", "難しい", "失敗", "課題", "悩", "葛藤", "苦戦", "できな", "遅れ", "わから", "詰ま"];
-    const matchesStruggle = struggleKeywords.filter(kw => textSource.join(" ").includes(kw));
-
-    if (matchesStruggle.length > 0) {
-      struggle = `テーマ ${itemIndex + 1} における「${matchesStruggle.slice(0, 3).join('環境要因と『苦戦』')}」についての葛藤や試行錯誤が抽出されました。`;
-    }
+    let situation = "シミュレーション環境での実行";
+    let task = `テーマ ${itemIndex + 1} の解析`;
+    let action = "テストデータの処理と分類";
+    let result = "モックデータの生成完了";
+    let question = "今後のマイルストーンおよび優先順位について。";
+    let nextTodo = "次の実験の準備";
 
     if (textSource.length > 0) {
-      conclusion = textSource[0].replace(/[-*+\d.]/, "").trim();
+      result = textSource[0].replace(/[-*+\d.]/, "").trim();
       if (textSource.length > 1) {
-        discussion = `「${textSource[textSource.length - 1].replace(/[-*+\d.]/, "").trim().substring(0, 40)}...」に関して、具体的な進め方や評価方法を相談すべきです。`;
+        question = `「${textSource[textSource.length - 1].replace(/[-*+\d.]/, "").trim().substring(0, 40)}...」に関して、具体的な進め方や評価方法を相談すべきです。`;
       }
     }
 
@@ -187,9 +238,12 @@ function generateSimulatedResponse(rawMemo: string, nodes: NodeItem[]) {
     }
 
     return {
-      conclusion,
-      struggle,
-      discussion,
+      situation,
+      task,
+      action,
+      result,
+      question,
+      nextTodo,
       nodeId: matchedNodeId,
       newNodeLabel,
       newNodeParentId,
@@ -208,6 +262,7 @@ function generateSimulatedResponse(rawMemo: string, nodes: NodeItem[]) {
   }
 
   return {
+    isSufficient: true,
     items,
   };
 }
