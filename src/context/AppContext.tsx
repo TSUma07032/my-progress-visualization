@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { getStoragePreference, setStoragePreference } from "../lib/dbService";
+import { initSupabase } from "../lib/supabase";
 
 interface AppContextType {
   isCreator: boolean;
@@ -41,6 +42,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const storedMode = getStoragePreference();
     const storedSupabaseUrl = localStorage.getItem(SUPABASE_URL_STORAGE) || "";
     const storedSupabaseKey = localStorage.getItem(SUPABASE_KEY_STORAGE) || "";
+    if (storedSupabaseUrl && storedSupabaseKey) {
+      initSupabase(storedSupabaseUrl, storedSupabaseKey);
+    }
 
     setGeminiApiKey(storedApiKey);
     setIsCreator(storedCreator);
@@ -95,6 +99,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSupabaseKey(key);
     localStorage.setItem(SUPABASE_URL_STORAGE, url);
     localStorage.setItem(SUPABASE_KEY_STORAGE, key);
+    initSupabase(url, key);
   };
 
   const clearSupabaseConfig = () => {
@@ -102,6 +107,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSupabaseKey("");
     localStorage.removeItem(SUPABASE_URL_STORAGE);
     localStorage.removeItem(SUPABASE_KEY_STORAGE);
+    initSupabase("", "");
   };
 
   return (
