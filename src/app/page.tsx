@@ -35,6 +35,10 @@ export default function Home() {
     unlockCreator,
     lockCreator,
     saveGeminiApiKey,
+    supabaseUrl,
+    supabaseKey,
+    saveSupabaseConfig,
+    clearSupabaseConfig,
   } = useApp();
 
   // Core Data States
@@ -76,6 +80,9 @@ export default function Home() {
   const [passcodeError, setPasscodeError] = useState(false);
 
   const [showKeyModal, setShowKeyModal] = useState(false);
+  const [showSupabaseModal, setShowSupabaseModal] = useState(false);
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState("");
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
 
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
@@ -600,13 +607,7 @@ export default function Home() {
 マージ元の進捗一覧:
 ${combinedMemos}
 
-必ず以下のJSONスキーマに従った単一のオブジェクトのみを出力してください。
-JSONスキーマ:
-{
-  "conclusion": "成果や結論を1〜3行にまとめた文章",
-  "struggle": "直面した悩み、葛藤、バグ、問題点の詳細をまとめた文章（省略せず綺麗にまとめすぎないようにしてください）",
-  "discussion": "統括的に報告相手へ質問・相談すべき相談事項の提案"
-}
+
 `;
 
       const genAI = new GoogleGenerativeAI(geminiApiKey);
@@ -655,6 +656,17 @@ JSONスキーマ:
   }, [logs, nodes]);
 
   // Handle saving credentials
+  const handleSaveSupabaseConfig = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveSupabaseConfig(supabaseUrlInput.trim(), supabaseKeyInput.trim());
+    setShowSupabaseModal(false);
+    showToast(
+      supabaseUrlInput.trim() && supabaseKeyInput.trim()
+        ? "Supabaseの設定を保存しました。"
+        : "Supabaseの設定をクリアしました。"
+    );
+  };
+
   const handleSaveApiKey = (e: React.FormEvent) => {
     e.preventDefault();
     saveGeminiApiKey(apiKeyInput.trim());
@@ -775,7 +787,34 @@ JSONスキーマ:
               >
                 Firebase
               </button>
+              <button
+                onClick={() => setStorageMode("supabase")}
+                className={`text-[10px] font-bold px-2 py-1 rounded transition-all duration-150 ${
+                  storageMode === "supabase"
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-400 hover:text-slate-600"
+                }`}
+              >
+                Supabase
+              </button>
             </div>
+
+            {/* Supabase configuration */}
+            <button
+              onClick={() => {
+                setSupabaseUrlInput(supabaseUrl);
+                setSupabaseKeyInput(supabaseKey);
+                setShowSupabaseModal(true);
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
+                supabaseUrl && supabaseKey
+                  ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
+                  : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <Settings className="w-3.5 h-3.5 text-blue-500" />
+              <span>{supabaseUrl && supabaseKey ? "Supabase設定済" : "Supabase設定"}</span>
+            </button>
 
             {/* Gemini API key configuration */}
             <button
@@ -869,7 +908,7 @@ JSONスキーマ:
           </div>
 
           <div className="text-[11px] font-bold text-slate-400">
-            {storageMode === "firebase" ? "📡 Firebase同期接続中" : "💾 ブラウザのLocalStorageに保存中"}
+            {storageMode === "firebase" ? "📡 Firebase同期接続中" : storageMode === "supabase" ? "🐘 Supabase同期接続中" : "💾 ブラウザのLocalStorageに保存中"}
           </div>
         </div>
       </div>
@@ -1030,48 +1069,32 @@ JSONスキーマ:
                                 </div>
 
                                 {/* Conclusion edit */}
-                                <div className="space-y-1">
-                                  <label className="block text-[10px] font-black text-slate-400 uppercase">
-                                    結論・進捗要約:
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={item.conclusion}
-                                    onChange={(e) =>
-                                      handleUpdateAnalyzedItemField(item.id, "conclusion", e.target.value)
-                                    }
-                                    className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-800 font-semibold"
-                                  />
-                                </div>
-
-                                {/* Struggle edit */}
-                                <div className="space-y-1">
-                                  <label className="block text-[10px] font-black text-slate-400 uppercase">
-                                    葛藤と試行錯誤プロセス:
-                                  </label>
-                                  <textarea
-                                    value={item.struggle}
-                                    onChange={(e) =>
-                                      handleUpdateAnalyzedItemField(item.id, "struggle", e.target.value)
-                                    }
-                                    className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-700 leading-relaxed"
-                                    rows={2}
-                                  />
-                                </div>
-
-                                {/* Discussion edit */}
-                                <div className="space-y-1">
-                                  <label className="block text-[10px] font-black text-slate-400 uppercase">
-                                    相談・議論のテーマ:
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={item.discussion}
-                                    onChange={(e) =>
-                                      handleUpdateAnalyzedItemField(item.id, "discussion", e.target.value)
-                                    }
-                                    className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-600 font-semibold"
-                                  />
+                                {/* STAR + Q + N edits */}
+                                <div className="space-y-3">
+                                  <div className="space-y-1">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase">Situation (状況):</label>
+                                    <input type="text" value={item.situation} onChange={(e) => handleUpdateAnalyzedItemField(item.id, "situation", e.target.value)} className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-700" />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase">Task (課題):</label>
+                                    <input type="text" value={item.task} onChange={(e) => handleUpdateAnalyzedItemField(item.id, "task", e.target.value)} className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-800 font-semibold" />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase">Action (行動):</label>
+                                    <textarea value={item.action} onChange={(e) => handleUpdateAnalyzedItemField(item.id, "action", e.target.value)} className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-700 leading-relaxed" rows={3} />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="block text-[10px] font-black text-slate-400 uppercase">Result (結果):</label>
+                                    <input type="text" value={item.result} onChange={(e) => handleUpdateAnalyzedItemField(item.id, "result", e.target.value)} className="w-full border border-slate-100 rounded-lg p-2 focus:ring-1 focus:ring-emerald-500 focus:outline-none text-xs text-slate-800 font-bold" />
+                                  </div>
+                                  <div className="space-y-1 bg-indigo-50/50 p-2 rounded-lg border border-indigo-100/50">
+                                    <label className="block text-[10px] font-black text-indigo-400 uppercase">Question (相談事項 - 任意):</label>
+                                    <input type="text" value={item.question || ""} onChange={(e) => handleUpdateAnalyzedItemField(item.id, "question", e.target.value)} className="w-full bg-white border border-indigo-100 rounded p-1.5 focus:ring-1 focus:ring-indigo-500 focus:outline-none text-xs text-indigo-700" placeholder="相談事項があれば記入..." />
+                                  </div>
+                                  <div className="space-y-1 bg-orange-50/50 p-2 rounded-lg border border-orange-100/50">
+                                    <label className="block text-[10px] font-black text-orange-400 uppercase">Next Todo (次タスク - 任意):</label>
+                                    <input type="text" value={item.nextTodo || ""} onChange={(e) => handleUpdateAnalyzedItemField(item.id, "nextTodo", e.target.value)} className="w-full bg-white border border-orange-100 rounded p-1.5 focus:ring-1 focus:ring-orange-500 focus:outline-none text-xs text-orange-800" placeholder="次のタスクがあれば記入..." />
+                                  </div>
                                 </div>
 
                                 {/* Mapping Selector */}
@@ -1419,13 +1442,13 @@ JSONスキーマ:
                                         <label className="block text-[10px] font-black text-slate-400">Result (結果):</label>
                                         <input type="text" value={editResult} onChange={(e) => setEditResult(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-800 font-semibold" />
                                       </div>
-                                      <div className="space-y-1">
-                                        <label className="block text-[10px] font-black text-slate-400">Question (相談):</label>
-                                        <input type="text" value={editQuestion} onChange={(e) => setEditQuestion(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700" />
+                                      <div className="space-y-1 mt-2">
+                                        <label className="block text-[10px] font-black text-slate-400">Question (相談 / 任意):</label>
+                                        <input type="text" value={editQuestion} onChange={(e) => setEditQuestion(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700 bg-indigo-50/30" placeholder="相談事項があれば記入" />
                                       </div>
-                                      <div className="space-y-1">
-                                        <label className="block text-[10px] font-black text-slate-400">Next Todo (次):</label>
-                                        <input type="text" value={editNextTodo} onChange={(e) => setEditNextTodo(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700" />
+                                      <div className="space-y-1 mt-2">
+                                        <label className="block text-[10px] font-black text-slate-400">Next Todo (次 / 任意):</label>
+                                        <input type="text" value={editNextTodo} onChange={(e) => setEditNextTodo(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700 bg-orange-50/30" placeholder="次のタスクがあれば記入" />
                                       </div>
                                       <div className="flex gap-1.5 justify-end">
                                         <button
@@ -1615,8 +1638,8 @@ JSONスキーマ:
                       <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Task (課題)</h4><p className="text-slate-800 font-semibold pl-4">{log.task}</p></div>
                       <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Action (行動)</h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{log.action}</p></div>
                       <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Result (結果)</h4><p className="text-slate-800 font-semibold pl-4">{log.result}</p></div>
-                      {log.question && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Question (相談)</h4><p className="text-slate-900 font-bold pl-4">❓ {log.question}</p></div>}
-                      {log.nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Next (次)</h4><p className="text-slate-700 pl-4">{log.nextTodo}</p></div>}
+                      {log.question && <div className="space-y-0.5"><h4 className="font-bold text-indigo-800 leading-snug">■ Question (相談)</h4><p className="text-indigo-900 font-bold pl-4 italic">❓ {log.question}</p></div>}
+                      {log.nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-orange-800 leading-snug">■ Next (次)</h4><p className="text-orange-900 font-semibold pl-4">→ {log.nextTodo}</p></div>}
                     </div>
                   ))}
                 </div>
@@ -1679,6 +1702,77 @@ JSONスキーマ:
               >
                 ログイン
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* SUPABASE CONFIG MODAL */}
+      {showSupabaseModal && (
+        <div className="no-print fixed inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="font-black text-slate-800 flex items-center gap-2 text-sm">
+                <Settings className="w-5 h-5 text-blue-500" />
+                <span>Supabase 接続設定</span>
+              </h3>
+              <button
+                onClick={() => setShowSupabaseModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveSupabaseConfig} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-600">
+                  Supabase URL:
+                </label>
+                <input
+                  type="text"
+                  value={supabaseUrlInput}
+                  onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                  placeholder="https://xxxx.supabase.co"
+                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 text-xs focus:outline-none font-mono"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-600">
+                  Supabase Anon Key:
+                </label>
+                <input
+                  type="password"
+                  value={supabaseKeyInput}
+                  onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                  placeholder="eyJhbGciOiJIUzI1NiIsInR5..."
+                  className="w-full border border-slate-200 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 text-xs focus:outline-none font-mono"
+                />
+                <p className="text-[10px] text-slate-400 leading-normal mt-1">
+                  キーはブラウザに保存され、Supabaseとの通信に使用されます。
+                </p>
+              </div>
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearSupabaseConfig();
+                    setSupabaseUrlInput("");
+                    setSupabaseKeyInput("");
+                    setShowSupabaseModal(false);
+                    showToast("Supabase設定をクリアしました。");
+                  }}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold"
+                >
+                  設定を消去
+                </button>
+                <button
+                  type="submit"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-black px-4 py-2 rounded-lg text-xs shadow-md transition"
+                >
+                  保存
+                </button>
+              </div>
             </form>
           </div>
         </div>
