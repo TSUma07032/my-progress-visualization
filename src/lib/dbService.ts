@@ -84,9 +84,12 @@ const DEFAULT_LOGS: Record<string, ProgressLog[]> = {
       rawMemo: `### 今週の作業メモ
 Gemini 2.5-flashを用いてJSONの構造化出力を試行した。
 スキーマを指定することでかなり安定して出力が得られるようになったが、たまに想定外のハルシネーションが発生して関係ない新規ノードを提案してくる問題に直面した。`,
-      conclusion: "GeminiのStructured Outputsを利用したJSON出力の構造化と安定化に成功した。",
-      struggle: "極稀に発生するハルシネーションと、出力スキーマから逸脱したキーが返された場合の安全なフォールバック設計に苦戦した。",
-      discussion: "例外的なノード出力があった際、既存ツリーにどうマッピングさせるか、または「未分類」に綺麗に振り分けるルール作りについて、相談したい。",
+      situation: "Gemini 2.5-flashを用いてJSONの構造化出力を試行した。",
+      task: "JSONの構造化と安定出力",
+      action: "スキーマを指定することでかなり安定して出力が得られるようになったが、たまに想定外のハルシネーションが発生して関係ない新規ノードを提案してくる問題に直面した。極稀に発生するハルシネーションと、出力スキーマから逸脱したキーが返された場合の安全なフォールバック設計に苦戦した。",
+      result: "GeminiのStructured Outputsを利用したJSON出力の構造化と安定化に成功した。",
+      question: "例外的なノード出力があった際、既存ツリーにどうマッピングさせるか、または「未分類」に綺麗に振り分けるルール作りについて、相談したい。",
+      nextTodo: "さらなるテストケースの追加",
       createdAt: Date.now() - 3600000 * 24,
       talked: false,
     },
@@ -138,7 +141,7 @@ export const dbService = {
             await this.createNode(defaultProj.id, node.label, node.parentId, node.id);
           }
           for (const log of DEFAULT_LOGS[defaultProj.id]) {
-            await this.createLog(defaultProj.id, log.nodeId, log.rawMemo, log.conclusion, log.struggle, log.discussion, log.id, log.createdAt, log.talked);
+            await this.createLog(defaultProj.id, log.nodeId, log.rawMemo, log.situation, log.task, log.action, log.result, log.question, log.nextTodo, log.id, log.createdAt, log.talked);
           }
           return [defaultProj];
         }
@@ -291,9 +294,12 @@ export const dbService = {
             id: docSnap.id,
             nodeId: data.nodeId || "",
             rawMemo: data.rawMemo || "",
-            conclusion: data.conclusion || "",
-            struggle: data.struggle || "",
-            discussion: data.discussion || "",
+            situation: data.situation || "",
+            task: data.task || "",
+            action: data.action || "",
+            result: data.result || "",
+            question: data.question || "",
+            nextTodo: data.nextTodo || "",
             talked: data.talked === undefined ? false : data.talked,
             createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
           });
@@ -313,9 +319,12 @@ export const dbService = {
     projectId: string,
     nodeId: string,
     rawMemo: string,
-    conclusion: string,
-    struggle: string,
-    discussion: string,
+    situation: string,
+    task: string,
+    action: string,
+    result: string,
+    question?: string,
+    nextTodo?: string,
     customId?: string,
     customCreatedAt?: number,
     talked?: boolean
@@ -327,9 +336,12 @@ export const dbService = {
       id,
       nodeId,
       rawMemo,
-      conclusion,
-      struggle,
-      discussion,
+      situation,
+      task,
+      action,
+      result,
+      question,
+      nextTodo,
       createdAt,
       talked: isTalked,
     };
@@ -340,9 +352,12 @@ export const dbService = {
         await setDoc(doc(db, "projects", projectId, "logs", id), {
           nodeId,
           rawMemo,
-          conclusion,
-          struggle,
-          discussion,
+          situation,
+          task,
+          action,
+          result,
+          question: question || "",
+          nextTodo: nextTodo || "",
           createdAt: new Date(createdAt),
           talked: isTalked,
         });

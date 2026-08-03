@@ -62,9 +62,12 @@ export default function Home() {
   const [checkedLogIds, setCheckedLogIds] = useState<Set<string>>(new Set());
   const [isCollectiveSummarizing, setIsCollectiveSummarizing] = useState(false);
   const [collectiveSummaryResult, setCollectiveSummaryResult] = useState<{
-    conclusion: string;
-    struggle: string;
-    discussion: string;
+    situation: string;
+    task: string;
+    action: string;
+    result: string;
+    question: string;
+    nextTodo: string;
   } | null>(null);
 
   // Modals & Inputs
@@ -87,9 +90,12 @@ export default function Home() {
   const [nodeNewParentId, setNodeNewParentId] = useState<string>("null");
 
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
-  const [editConclusion, setEditConclusion] = useState("");
-  const [editStruggle, setEditStruggle] = useState("");
-  const [editDiscussion, setEditDiscussion] = useState("");
+  const [editSituation, setEditSituation] = useState("");
+  const [editTask, setEditTask] = useState("");
+  const [editAction, setEditAction] = useState("");
+  const [editResult, setEditResult] = useState("");
+  const [editQuestion, setEditQuestion] = useState("");
+  const [editNextTodo, setEditNextTodo] = useState("");
 
   // System Loading / Toast
   const [isLoadingData, setIsLoadingData] = useState(true);
@@ -374,9 +380,12 @@ export default function Home() {
 
   const handleLogEditStart = (log: ProgressLog) => {
     setEditingLogId(log.id);
-    setEditConclusion(log.conclusion);
-    setEditStruggle(log.struggle);
-    setEditDiscussion(log.discussion);
+    setEditSituation(log.situation);
+    setEditTask(log.task);
+    setEditAction(log.action);
+    setEditResult(log.result);
+    setEditQuestion(log.question || "");
+    setEditNextTodo(log.nextTodo || "");
   };
 
   const handleLogEditSubmit = async (e: React.FormEvent, logId: string) => {
@@ -385,9 +394,12 @@ export default function Home() {
 
     try {
       await dbService.updateLog(selectedProject.id, logId, {
-        conclusion: editConclusion,
-        struggle: editStruggle,
-        discussion: editDiscussion,
+        situation: editSituation,
+        task: editTask,
+        action: editAction,
+        result: editResult,
+        question: editQuestion,
+        nextTodo: editNextTodo,
       });
       setEditingLogId(null);
       showToast("進捗ログの内容を更新しました。");
@@ -440,9 +452,12 @@ export default function Home() {
           const mappingType = defaultNodeId ? "existing" : "new";
           return {
             id: `temp-item-${idx}-${Date.now()}`,
-            conclusion: item.conclusion || "",
-            struggle: item.struggle || "",
-            discussion: item.discussion || "",
+            situation: item.situation || "",
+            task: item.task || "",
+            action: item.action || "",
+            result: item.result || "",
+            question: item.question || "",
+            nextTodo: item.nextTodo || "",
             mappingType, // "existing" or "new"
             nodeId: defaultNodeId || (nodes.length > 0 ? nodes[0].id : ""),
             newNodeLabel: item.newNodeLabel || `展開：新進捗テーマ-${idx + 1}`,
@@ -494,9 +509,12 @@ export default function Home() {
           selectedProject.id,
           finalNodeId || (nodes.length > 0 ? nodes[0].id : "node-root"),
           rawMemo,
-          item.conclusion,
-          item.struggle,
-          item.discussion,
+          item.situation,
+          item.task,
+          item.action,
+          item.result,
+          item.question,
+          item.nextTodo,
           undefined,
           undefined,
           false // default: unmarked as talked (unreported)
@@ -549,20 +567,23 @@ export default function Home() {
 
     const logsToSummarize = logs.filter((l) => checkedLogIds.has(l.id));
     const combinedMemos = logsToSummarize
-      .map((l, idx) => `[進捗ログ ${idx + 1}]\n結論：${l.conclusion}\n葛藤：${l.struggle}\n相談事項：${l.discussion}`)
+      .map((l, idx) => `[進捗ログ ${idx + 1}]\n状況：${l.situation}\n課題：${l.task}\n行動：${l.action}\n結果：${l.result}\n相談：${l.question}\n次：${l.nextTodo}`)
       .join("\n\n---\n\n");
 
     try {
       if (!geminiApiKey) {
         // Fallback simulation for merging summaries
         setTimeout(() => {
-          const combinedConclusion = `【一括要約】選ばれた ${logsToSummarize.length} 件の進捗の成果を統合：\n` + logsToSummarize.map(l => l.conclusion).join(" / ");
-          const combinedStruggle = `選ばれた進捗に共通するエラー・課題：\n` + logsToSummarize.map(l => l.struggle).join("\n");
-          const combinedDiscussion = `統括的な議論テーマの提案：\n` + logsToSummarize.map(l => l.discussion).join("\n");
+          const combinedConclusion = `【一括要約】選ばれた ${logsToSummarize.length} 件の進捗の成果を統合：\n` + logsToSummarize.map(l => l.result).join(" / ");
+          const combinedStruggle = `選ばれた進捗に共通するエラー・課題：\n` + logsToSummarize.map(l => l.action).join("\n");
+          const combinedDiscussion = `統括的な議論テーマの提案：\n` + logsToSummarize.map(l => l.question).join("\n");
           setCollectiveSummaryResult({
-            conclusion: combinedConclusion,
-            struggle: combinedStruggle,
-            discussion: combinedDiscussion,
+            situation: "一括要約",
+            task: "複数タスクの統合",
+            action: combinedStruggle,
+            result: combinedConclusion,
+            question: combinedDiscussion,
+            nextTodo: "次フェーズへ移行"
           });
           setIsCollectiveSummarizing(false);
         }, 1200);
@@ -598,9 +619,12 @@ JSONスキーマ:
 
       const parsed = JSON.parse(text);
       setCollectiveSummaryResult({
-        conclusion: parsed.conclusion || "要約の生成に失敗しました。",
-        struggle: parsed.struggle || "葛藤の生成に失敗しました。",
-        discussion: parsed.discussion || "相談事項の生成に失敗しました。",
+        situation: parsed.situation || "",
+        task: parsed.task || "",
+        action: parsed.action || "",
+        result: parsed.result || "要約の生成に失敗しました。",
+        question: parsed.question || "",
+        nextTodo: parsed.nextTodo || "",
       });
     } catch (err: any) {
       console.error(err);
@@ -1148,9 +1172,12 @@ JSONスキーマ:
                                           selectedProject!.id,
                                           finalId || (nodes.length > 0 ? nodes[0].id : "node-root"),
                                           rawMemo,
-                                          item.conclusion,
-                                          item.struggle,
-                                          item.discussion,
+                                          item.situation,
+                                          item.task,
+                                          item.action,
+                                          item.result,
+                                          item.question,
+                                          item.nextTodo,
                                           undefined,
                                           undefined,
                                           false
@@ -1374,37 +1401,28 @@ JSONスキーマ:
                                       className="space-y-3"
                                     >
                                       <div className="space-y-1">
-                                        <label className="block text-[10px] font-black text-slate-400">
-                                          結論:
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={editConclusion}
-                                          onChange={(e) => setEditConclusion(e.target.value)}
-                                          className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-800 font-semibold"
-                                        />
+                                        <label className="block text-[10px] font-black text-slate-400">Situation (状況):</label>
+                                        <input type="text" value={editSituation} onChange={(e) => setEditSituation(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-800" />
                                       </div>
                                       <div className="space-y-1">
-                                        <label className="block text-[10px] font-black text-slate-400">
-                                          葛藤:
-                                        </label>
-                                        <textarea
-                                          value={editStruggle}
-                                          onChange={(e) => setEditStruggle(e.target.value)}
-                                          className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700"
-                                          rows={2}
-                                        />
+                                        <label className="block text-[10px] font-black text-slate-400">Task (課題):</label>
+                                        <input type="text" value={editTask} onChange={(e) => setEditTask(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-800 font-semibold" />
                                       </div>
                                       <div className="space-y-1">
-                                        <label className="block text-[10px] font-black text-slate-400">
-                                          相談事項:
-                                        </label>
-                                        <input
-                                          type="text"
-                                          value={editDiscussion}
-                                          onChange={(e) => setEditDiscussion(e.target.value)}
-                                          className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-600"
-                                        />
+                                        <label className="block text-[10px] font-black text-slate-400">Action (行動):</label>
+                                        <textarea value={editAction} onChange={(e) => setEditAction(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700 min-h-[60px]" />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="block text-[10px] font-black text-slate-400">Result (結果):</label>
+                                        <input type="text" value={editResult} onChange={(e) => setEditResult(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-800 font-semibold" />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="block text-[10px] font-black text-slate-400">Question (相談):</label>
+                                        <input type="text" value={editQuestion} onChange={(e) => setEditQuestion(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700" />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <label className="block text-[10px] font-black text-slate-400">Next Todo (次):</label>
+                                        <input type="text" value={editNextTodo} onChange={(e) => setEditNextTodo(e.target.value)} className="w-full border border-slate-200 rounded p-1.5 text-xs text-slate-700" />
                                       </div>
                                       <div className="flex gap-1.5 justify-end">
                                         <button
@@ -1424,30 +1442,12 @@ JSONスキーマ:
                                     </form>
                                   ) : (
                                     <div className="space-y-2 text-xs leading-relaxed">
-                                      <div className="space-y-0.5">
-                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                                          1. 結論要約
-                                        </span>
-                                        <p className="font-bold text-slate-800">
-                                          {log.conclusion}
-                                        </p>
-                                      </div>
-                                      <div className="space-y-0.5">
-                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                                          2. 葛藤と試行錯誤
-                                        </span>
-                                        <p className="text-slate-600 whitespace-pre-wrap">
-                                          {log.struggle}
-                                        </p>
-                                      </div>
-                                      <div className="space-y-0.5">
-                                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                                          3. 相談テーマ
-                                        </span>
-                                        <p className="font-semibold text-slate-700 italic">
-                                          ❓ {log.discussion}
-                                        </p>
-                                      </div>
+                                                                            <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Situation (状況)</span><p className="text-slate-700">{log.situation}</p></div>
+                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Task (課題)</span><p className="font-bold text-slate-800">{log.task}</p></div>
+                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Action (行動)</span><p className="text-slate-600 whitespace-pre-wrap">{log.action}</p></div>
+                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Result (結果)</span><p className="font-bold text-slate-800">{log.result}</p></div>
+                                      {log.question && <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Question (相談)</span><p className="font-semibold text-slate-700 italic">❓ {log.question}</p></div>}
+                                      {log.nextTodo && <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Next (次)</span><p className="text-slate-700">{log.nextTodo}</p></div>}
                                     </div>
                                   )}
                                 </div>
@@ -1539,37 +1539,12 @@ JSONスキーマ:
                                 </div>
 
                                 {/* 1. Conclusion */}
-                                <div className="space-y-0.5">
-                                  <h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1">
-                                    <span className="text-emerald-600">■</span>
-                                    <span>成果・結論要約</span>
-                                  </h4>
-                                  <p className="text-slate-800 font-semibold pl-4">
-                                    {log.conclusion}
-                                  </p>
-                                </div>
-
-                                {/* 2. Struggle */}
-                                <div className="space-y-0.5">
-                                  <h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1">
-                                    <span className="text-amber-600">■</span>
-                                    <span>葛藤と試行錯誤（本音プロセス）</span>
-                                  </h4>
-                                  <p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">
-                                    {log.struggle}
-                                  </p>
-                                </div>
-
-                                {/* 3. Discussion */}
-                                <div className="space-y-0.5">
-                                  <h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1">
-                                    <span className="text-indigo-600">■</span>
-                                    <span>今後の相談・議論のテーマ</span>
-                                  </h4>
-                                  <p className="text-indigo-900 font-bold italic pl-4">
-                                    ❓ {log.discussion}
-                                  </p>
-                                </div>
+                                                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-blue-600">■</span><span>Situation (状況)</span></h4><p className="text-slate-700 pl-4">{log.situation}</p></div>
+                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-purple-600">■</span><span>Task (課題)</span></h4><p className="text-slate-800 font-semibold pl-4">{log.task}</p></div>
+                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-amber-600">■</span><span>Action (行動)</span></h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{log.action}</p></div>
+                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-emerald-600">■</span><span>Result (結果)</span></h4><p className="text-slate-800 font-semibold pl-4">{log.result}</p></div>
+                                {log.question && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-indigo-600">■</span><span>Question (相談)</span></h4><p className="text-indigo-900 font-bold italic pl-4">❓ {log.question}</p></div>}
+                                {log.nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-orange-600">■</span><span>Next (次)</span></h4><p className="text-slate-700 pl-4">{log.nextTodo}</p></div>}
                               </div>
                             ))}
                           </div>
@@ -1633,32 +1608,12 @@ JSONスキーマ:
                         <span>記録日: {new Date(log.createdAt).toLocaleDateString("ja-JP")}</span>
                       </div>
 
-                      <div className="space-y-0.5">
-                        <h4 className="font-bold text-slate-900 leading-snug">
-                          ■ 成果・結論要約
-                        </h4>
-                        <p className="text-slate-800 font-semibold pl-4">
-                          {log.conclusion}
-                        </p>
-                      </div>
-
-                      <div className="space-y-0.5">
-                        <h4 className="font-bold text-slate-900 leading-snug">
-                          ■ 葛藤と試行錯誤（本音プロセス）
-                        </h4>
-                        <p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">
-                          {log.struggle}
-                        </p>
-                      </div>
-
-                      <div className="space-y-0.5">
-                        <h4 className="font-bold text-slate-900 leading-snug">
-                          ■ 今後の相談・議論のテーマ
-                        </h4>
-                        <p className="text-slate-900 font-bold pl-4">
-                          ❓ {log.discussion}
-                        </p>
-                      </div>
+                                            <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Situation (状況)</h4><p className="text-slate-700 pl-4">{log.situation}</p></div>
+                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Task (課題)</h4><p className="text-slate-800 font-semibold pl-4">{log.task}</p></div>
+                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Action (行動)</h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{log.action}</p></div>
+                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Result (結果)</h4><p className="text-slate-800 font-semibold pl-4">{log.result}</p></div>
+                      {log.question && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Question (相談)</h4><p className="text-slate-900 font-bold pl-4">❓ {log.question}</p></div>}
+                      {log.nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Next (次)</h4><p className="text-slate-700 pl-4">{log.nextTodo}</p></div>}
                     </div>
                   ))}
                 </div>
@@ -1890,33 +1845,43 @@ JSONスキーマ:
             </div>
 
             <div className="space-y-4 text-xs leading-relaxed max-h-[400px] overflow-y-auto pr-2">
-              {/* Conclusion */}
-              <div className="space-y-1 bg-emerald-50/40 p-3 rounded-xl border border-emerald-100">
-                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block">
-                  ① 統合された結論・成果
+              {/* Situation */}
+              <div className="space-y-1 bg-blue-50/40 p-3 rounded-xl border border-blue-100">
+                <span className="text-[10px] font-black text-blue-800 uppercase tracking-wider block">
+                  Situation
                 </span>
                 <p className="font-bold text-slate-800 whitespace-pre-wrap">
-                  {collectiveSummaryResult.conclusion}
+                  {collectiveSummaryResult.situation || ""}
                 </p>
               </div>
 
-              {/* Struggle */}
+              {/* Task */}
+              <div className="space-y-1 bg-purple-50/40 p-3 rounded-xl border border-purple-100">
+                <span className="text-[10px] font-black text-purple-800 uppercase tracking-wider block">
+                  Task
+                </span>
+                <p className="font-bold text-slate-800 whitespace-pre-wrap">
+                  {collectiveSummaryResult.task || ""}
+                </p>
+              </div>
+
+              {/* Action */}
               <div className="space-y-1 bg-amber-50/40 p-3 rounded-xl border border-amber-100">
                 <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider block">
-                  ② 統合された葛藤とプロセス
+                  Action
                 </span>
                 <p className="text-slate-700 whitespace-pre-wrap">
-                  {collectiveSummaryResult.struggle}
+                  {collectiveSummaryResult.action || ""}
                 </p>
               </div>
 
-              {/* Discussion */}
-              <div className="space-y-1 bg-indigo-50/40 p-3 rounded-xl border border-indigo-100">
-                <span className="text-[10px] font-black text-indigo-800 uppercase tracking-wider block">
-                  ③ 統合された今後の相談テーマ
+              {/* Result */}
+              <div className="space-y-1 bg-emerald-50/40 p-3 rounded-xl border border-emerald-100">
+                <span className="text-[10px] font-black text-emerald-800 uppercase tracking-wider block">
+                  Result
                 </span>
-                <p className="font-bold text-slate-900 italic whitespace-pre-wrap">
-                  ❓ {collectiveSummaryResult.discussion}
+                <p className="font-bold text-slate-900 whitespace-pre-wrap">
+                  {collectiveSummaryResult.result || ""}
                 </p>
               </div>
             </div>

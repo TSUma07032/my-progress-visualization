@@ -16,9 +16,12 @@ export interface ProgressLog {
   id: string;
   nodeId: string;
   rawMemo: string;
-  conclusion: string;
-  struggle: string;
-  discussion: string;
+  situation: string;
+  task: string;
+  action: string;
+  result: string;
+  question?: string;
+  nextTodo?: string;
   createdAt: number;
   talked?: boolean; // 話済み or まだ話していない
 }
