@@ -8,11 +8,13 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { Project, ProjectNode, ProgressLog } from "./types";
+import { supabase } from "./supabase";
+export type DBMode = "firebase" | "mock" | "supabase";
 
 // Key for storage mode preference
 const STORAGE_PREF_KEY = "map_thinking_log_storage_pref";
 
-export function getStoragePreference(): "firebase" | "mock" {
+export function getStoragePreference(): "firebase" | "mock" | "supabase" {
   if (typeof window === "undefined") return "mock";
   const pref = localStorage.getItem(STORAGE_PREF_KEY);
   if (pref === "firebase" && hasFirebaseConfig) {
@@ -21,7 +23,7 @@ export function getStoragePreference(): "firebase" | "mock" {
   return "mock";
 }
 
-export function setStoragePreference(pref: "firebase" | "mock") {
+export function setStoragePreference(pref: "firebase" | "mock" | "supabase") {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_PREF_KEY, pref);
 }
@@ -117,8 +119,8 @@ initMockData();
 
 export const dbService = {
   // PROJECTS
-  async getProjects(): Promise<Project[]> {
-    const mode = getStoragePreference();
+  async getProjects(mode: DBMode = "mock"): Promise<Project[]> {
+
     if (mode === "firebase" && db) {
       try {
         const querySnapshot = await getDocs(collection(db, "projects"));
@@ -135,13 +137,13 @@ export const dbService = {
         // If empty in Firestore, seed with default
         if (projects.length === 0) {
           const defaultProj = DEFAULT_PROJECTS[0];
-          await this.createProject(defaultProj.title, defaultProj.id);
+          await this.createProject(mode, defaultProj.title, defaultProj.id);
           // Also seed nodes and logs
           for (const node of DEFAULT_NODES[defaultProj.id]) {
-            await this.createNode(defaultProj.id, node.label, node.parentId, node.id);
+            await this.createNode(mode, defaultProj.id, node.label, node.parentId, node.id);
           }
           for (const log of DEFAULT_LOGS[defaultProj.id]) {
-            await this.createLog(defaultProj.id, log.nodeId, log.rawMemo, log.situation, log.task, log.action, log.result, log.question, log.nextTodo, log.id, log.createdAt, log.talked);
+            await this.createLog(mode, defaultProj.id, log.nodeId, log.rawMemo, log.situation, log.task, log.action, log.result, log.question, log.nextTodo, log.id, log.createdAt, log.talked);
           }
           return [defaultProj];
         }
@@ -156,7 +158,7 @@ export const dbService = {
     return projs ? JSON.parse(projs) : [];
   },
 
-  async createProject(title: string, customId?: string): Promise<Project> {
+  async createProject(mode: DBMode = "mock", title: string, customId?: string): Promise<Project> {
     const id = customId || generateId();
     const newProj: Project = {
       id,
@@ -165,7 +167,21 @@ export const dbService = {
       updatedAt: Date.now(),
     };
 
-    const mode = getStoragePreference();
+    if (mode === "supabase" && supabase) {
+      try {
+        const { error } = await supabase.from("projects").insert({
+          id,
+          title,
+          created_at: new Date(newProj.createdAt).toISOString(),
+          updated_at: new Date(newProj.updatedAt).toISOString(),
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase createProject error", err);
+      }
+      return newProj;
+    }
+
     if (mode === "firebase" && db) {
       try {
         await setDoc(doc(db, "projects", id), {
@@ -180,15 +196,15 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getProjects();
+    const list = await this.getProjects(mode);
     list.unshift(newProj);
     localStorage.setItem("proj_list", JSON.stringify(list));
     return newProj;
   },
 
   // NODES
-  async getNodes(projectId: string): Promise<ProjectNode[]> {
-    const mode = getStoragePreference();
+  async getNodes(mode: DBMode = "mock", projectId: string): Promise<ProjectNode[]> {
+
     if (mode === "firebase" && db) {
       try {
         const querySnapshot = await getDocs(collection(db, "projects", projectId, "nodes"));
@@ -213,7 +229,7 @@ export const dbService = {
     return stored ? JSON.parse(stored) : [];
   },
 
-  async createNode(projectId: string, label: string, parentId: string | null, customId?: string): Promise<ProjectNode> {
+  async createNode(mode: DBMode = "mock", projectId: string, label: string, parentId: string | null, customId?: string): Promise<ProjectNode> {
     const id = customId || generateId();
     const newNode: ProjectNode = {
       id,
@@ -222,7 +238,23 @@ export const dbService = {
       createdAt: Date.now(),
     };
 
-    const mode = getStoragePreference();
+    if (mode === "supabase" && supabase) {
+      try {
+        const { error } = await supabase.from("nodes").insert({
+          id,
+          project_id: projectId,
+          parent_id: parentId,
+          label,
+          created_at: new Date(newNode.createdAt).toISOString(),
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase createNode error", err);
+      }
+      return newNode;
+    }
+
+
     if (mode === "firebase" && db) {
       try {
         await setDoc(doc(db, "projects", projectId, "nodes", id), {
@@ -237,14 +269,30 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getNodes(projectId);
+    const list = await this.getNodes(mode, projectId);
     list.push(newNode);
     localStorage.setItem(`nodes_${projectId}`, JSON.stringify(list));
     return newNode;
   },
 
-  async updateNode(projectId: string, nodeId: string, fields: Partial<Omit<ProjectNode, "id" | "createdAt">>): Promise<void> {
-    const mode = getStoragePreference();
+  async updateNode(mode: DBMode = "mock", projectId: string, nodeId: string, fields: Partial<Omit<ProjectNode, "id" | "createdAt">>): Promise<void> {
+    if (mode === "supabase" && supabase) {
+      try {
+        const payload: any = {};
+        if (fields.label !== undefined) payload.label = fields.label;
+        if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
+        const { error } = await supabase
+          .from("nodes")
+          .update(payload)
+          .eq("id", nodeId)
+          .eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase updateNode error", err);
+      }
+      return;
+    }
+
     if (mode === "firebase" && db) {
       try {
         const docRef = doc(db, "projects", projectId, "nodes", nodeId);
@@ -256,7 +304,7 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getNodes(projectId);
+    const list = await this.getNodes(mode, projectId);
     const index = list.findIndex((n) => n.id === nodeId);
     if (index !== -1) {
       list[index] = { ...list[index], ...fields };
@@ -264,8 +312,17 @@ export const dbService = {
     }
   },
 
-  async deleteNode(projectId: string, nodeId: string): Promise<void> {
-    const mode = getStoragePreference();
+  async deleteNode(mode: DBMode = "mock", projectId: string, nodeId: string): Promise<void> {
+    if (mode === "supabase" && supabase) {
+      try {
+        const { error } = await supabase.from("nodes").delete().eq("id", nodeId).eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase deleteNode error", err);
+      }
+      return;
+    }
+
     if (mode === "firebase" && db) {
       try {
         await deleteDoc(doc(db, "projects", projectId, "nodes", nodeId));
@@ -276,14 +333,14 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getNodes(projectId);
+    const list = await this.getNodes(mode, projectId);
     const filtered = list.filter((n) => n.id !== nodeId);
     localStorage.setItem(`nodes_${projectId}`, JSON.stringify(filtered));
   },
 
   // LOGS
-  async getLogs(projectId: string): Promise<ProgressLog[]> {
-    const mode = getStoragePreference();
+  async getLogs(mode: DBMode = "mock", projectId: string): Promise<ProgressLog[]> {
+
     if (mode === "firebase" && db) {
       try {
         const querySnapshot = await getDocs(collection(db, "projects", projectId, "logs"));
@@ -316,6 +373,7 @@ export const dbService = {
   },
 
   async createLog(
+    mode: DBMode = "mock",
     projectId: string,
     nodeId: string,
     rawMemo: string,
@@ -346,7 +404,7 @@ export const dbService = {
       talked: isTalked,
     };
 
-    const mode = getStoragePreference();
+
     if (mode === "firebase" && db) {
       try {
         await setDoc(doc(db, "projects", projectId, "logs", id), {
@@ -368,18 +426,42 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getLogs(projectId);
+    const list = await this.getLogs(mode, projectId);
     list.unshift(newLog);
     localStorage.setItem(`logs_${projectId}`, JSON.stringify(list));
     return newLog;
   },
 
-  async updateLog(projectId: string, logId: string, fields: Partial<Omit<ProgressLog, "id" | "createdAt">>): Promise<void> {
-    const mode = getStoragePreference();
-    if (mode === "firebase" && db) {
+    async updateLog(mode: DBMode = "mock", projectId: string, logId: string, updateData: Partial<Omit<ProgressLog, "id" | "createdAt">>): Promise<void> {
+    if (mode === "supabase" && supabase) {
+      try {
+        const updatePayload: any = {};
+        if (updateData.nodeId !== undefined) updatePayload.node_id = updateData.nodeId;
+        if (updateData.rawMemo !== undefined) updatePayload.raw_memo = updateData.rawMemo;
+        if (updateData.situation !== undefined) updatePayload.situation = updateData.situation;
+        if (updateData.task !== undefined) updatePayload.task = updateData.task;
+        if (updateData.action !== undefined) updatePayload.action = updateData.action;
+        if (updateData.result !== undefined) updatePayload.result = updateData.result;
+        if (updateData.question !== undefined) updatePayload.question = updateData.question;
+        if (updateData.nextTodo !== undefined) updatePayload.next_todo = updateData.nextTodo;
+        if (updateData.talked !== undefined) updatePayload.talked = updateData.talked;
+
+        const { error } = await supabase
+          .from("logs")
+          .update(updatePayload)
+          .eq("id", logId)
+          .eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase updateLog error", err);
+      }
+      return;
+    }
+
+        if (mode === "firebase" && db) {
       try {
         const docRef = doc(db, "projects", projectId, "logs", logId);
-        await updateDoc(docRef, fields);
+        await updateDoc(docRef, updateData as any);
         return;
       } catch (err) {
         console.error("Firestore updateLog failed", err);
@@ -387,16 +469,25 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getLogs(projectId);
+    const list = await this.getLogs(mode, projectId);
     const index = list.findIndex((l) => l.id === logId);
     if (index !== -1) {
-      list[index] = { ...list[index], ...fields };
+      list[index] = { ...list[index], ...updateData };
       localStorage.setItem(`logs_${projectId}`, JSON.stringify(list));
     }
   },
 
-  async deleteLog(projectId: string, logId: string): Promise<void> {
-    const mode = getStoragePreference();
+  async deleteLog(mode: DBMode = "mock", projectId: string, logId: string): Promise<void> {
+    if (mode === "supabase" && supabase) {
+      try {
+        const { error } = await supabase.from("logs").delete().eq("id", logId).eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase deleteLog error", err);
+      }
+      return;
+    }
+
     if (mode === "firebase" && db) {
       try {
         await deleteDoc(doc(db, "projects", projectId, "logs", logId));
@@ -407,7 +498,7 @@ export const dbService = {
     }
 
     // LocalStorage fallback
-    const list = await this.getLogs(projectId);
+    const list = await this.getLogs(mode, projectId);
     const filtered = list.filter((l) => l.id !== logId);
     localStorage.setItem(`logs_${projectId}`, JSON.stringify(filtered));
   },

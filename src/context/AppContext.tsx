@@ -6,9 +6,9 @@ import { getStoragePreference, setStoragePreference } from "../lib/dbService";
 interface AppContextType {
   isCreator: boolean;
   geminiApiKey: string;
-  storageMode: "firebase" | "mock";
+  storageMode: "firebase" | "mock" | "supabase";
   isMounted: boolean;
-  setStorageMode: (mode: "firebase" | "mock") => void;
+  setStorageMode: (mode: "firebase" | "mock" | "supabase") => void;
   unlockCreator: (passcode: string) => boolean;
   lockCreator: () => void;
   saveGeminiApiKey: (key: string) => void;
@@ -23,7 +23,7 @@ const CREATOR_ROLE_STORAGE = "map_thinking_log_is_creator";
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isCreator, setIsCreator] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [storageMode, setStorageModeState] = useState<"firebase" | "mock">("mock");
+  const [storageMode, setStorageModeState] = useState<"firebase" | "mock" | "supabase">("mock");
   const [isMounted, setIsMounted] = useState(false);
 
   // Initialize values on mount to prevent SSR hydration mismatches
@@ -38,7 +38,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setIsMounted(true);
   }, []);
 
-  const setStorageMode = (mode: "firebase" | "mock") => {
+  const setStorageMode = (mode: "firebase" | "mock" | "supabase") => {
     setStorageModeState(mode);
     setStoragePreference(mode);
     // Reload state or trigger DB refresh if needed

@@ -63,3 +63,22 @@ Live API　サポート対象外
 思考　サポート対象
 
 URL コンテキスト　サポート対象
+## Supabase Integration
+
+This project now supports **Supabase** as an external database option.
+
+To use Supabase:
+
+1. Create a new project on [Supabase](https://supabase.com).
+2. Go to the SQL Editor in your Supabase dashboard and run the SQL commands found in `supabase_schema.sql` to create the required tables.
+3. Find your **Project URL** and **anon public key** in the API Settings of your Supabase dashboard.
+4. Set the following Environment Variables in your local `.env.local` or on your Vercel Dashboard:
+   - \`NEXT_PUBLIC_SUPABASE_URL=your-supabase-url\`
+   - \`NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key\`
+
+The application will automatically detect these variables and allow you to select "Supabase" as the storage mode in the UI.
+
+## Vercel Deployment
+
+Push this repository to GitHub, go to Vercel, and import the repository. Vercel will automatically build and deploy it using Next.js.
+Make sure to copy over the environment variables for your Supabase/Firebase credentials and your \`NEXT_PUBLIC_CREATOR_PASSCODE\` into the Vercel dashboard.
