@@ -196,12 +196,12 @@ function generateSimulatedResponse(rawMemo: string, nodes: NodeItem[]) {
   const shouldSplit = memoText.length > 150 || lines.filter(l => l.startsWith("-") || l.startsWith("*") || l.match(/^\d+\./)).length >= 2;
 
   const createItem = (textSource: string[], itemIndex: number) => {
-    let situation = "シミュレーション環境での実行";
-    let task = `テーマ ${itemIndex + 1} の解析`;
-    let action = "テストデータの処理と分類";
+    const situation = "シミュレーション環境での実行";
+    const task = `テーマ ${itemIndex + 1} の解析`;
+    const action = "テストデータの処理と分類";
     let result = "モックデータの生成完了";
     let question = "今後のマイルストーンおよび優先順位について。";
-    let nextTodo = "次の実験の準備";
+    const nextTodo = "次の実験の準備";
 
     if (textSource.length > 0) {
       result = textSource[0].replace(/[-*+\d.]/, "").trim();
