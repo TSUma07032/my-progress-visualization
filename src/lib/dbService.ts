@@ -1,146 +1,599 @@
-import { Project, WbsNode, Todo } from "./types";
+import { db, hasFirebaseConfig } from "./firebase";
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import { Project, ProjectNode, ProgressLog } from "./types";
 import { getSupabase } from "./supabase";
-import { LexoRank } from "lexorank";
+export type DBMode = "firebase" | "mock" | "supabase";
+
+// Key for storage mode preference
+const STORAGE_PREF_KEY = "map_thinking_log_storage_pref";
+
+export function getStoragePreference(): "firebase" | "mock" | "supabase" {
+  if (typeof window === "undefined") return "mock";
+  const pref = localStorage.getItem(STORAGE_PREF_KEY);
+  if (pref === "firebase" && hasFirebaseConfig) {
+    return "firebase";
+  }
+  if (pref === "supabase" && getSupabase()) {
+    return "supabase";
+  }
+  return "mock";
+}
+
+export function setStoragePreference(pref: "firebase" | "mock" | "supabase") {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(STORAGE_PREF_KEY, pref);
+}
+
+// Generate unique ID helper
+function generateId(): string {
+  return Math.random().toString(36).substring(2, 11);
+}
+
+// Default Seed Data
+const DEFAULT_PROJECTS: Project[] = [
+  {
+    id: "proj-agent-dev",
+    title: "自律型AIエージェント開発プロジェクト",
+    createdAt: Date.now() - 3600000 * 48,
+    updatedAt: Date.now(),
+  },
+];
+
+const DEFAULT_NODES: Record<string, ProjectNode[]> = {
+  "proj-agent-dev": [
+    {
+      id: "node-root",
+      parentId: null,
+      label: "目的：自律的なタスク解決エージェントの構築",
+      createdAt: Date.now() - 3600000 * 48,
+    },
+    {
+      id: "node-llm",
+      parentId: "node-root",
+      label: "LLM API連携と機能設計",
+      createdAt: Date.now() - 3600000 * 47,
+    },
+    {
+      id: "node-prompt",
+      parentId: "node-llm",
+      label: "プロンプトエンジニアリング & JSON構造化",
+      createdAt: Date.now() - 3600000 * 46,
+    },
+    {
+      id: "node-db",
+      parentId: "node-root",
+      label: "データ蓄積（Firestore・LocalStorage）",
+      createdAt: Date.now() - 3600000 * 45,
+    },
+    {
+      id: "node-ui",
+      parentId: "node-root",
+      label: "React Flowによる可視化 UI/UX",
+      createdAt: Date.now() - 3600000 * 44,
+    },
+  ],
+};
+
+const DEFAULT_LOGS: Record<string, ProgressLog[]> = {
+  "proj-agent-dev": [
+    {
+      id: "log-1",
+      nodeId: "node-prompt",
+      rawMemo: `### 今週の作業メモ
+Gemini 2.5-flashを用いてJSONの構造化出力を試行した。
+スキーマを指定することでかなり安定して出力が得られるようになったが、たまに想定外のハルシネーションが発生して関係ない新規ノードを提案してくる問題に直面した。`,
+      situation: "Gemini 2.5-flashを用いてJSONの構造化出力を試行した。",
+      task: "JSONの構造化と安定出力",
+      action: "スキーマを指定することでかなり安定して出力が得られるようになったが、たまに想定外のハルシネーションが発生して関係ない新規ノードを提案してくる問題に直面した。極稀に発生するハルシネーションと、出力スキーマから逸脱したキーが返された場合の安全なフォールバック設計に苦戦した。",
+      result: "GeminiのStructured Outputsを利用したJSON出力の構造化と安定化に成功した。",
+      question: "例外的なノード出力があった際、既存ツリーにどうマッピングさせるか、または「未分類」に綺麗に振り分けるルール作りについて、相談したい。",
+      nextTodo: "さらなるテストケースの追加",
+      createdAt: Date.now() - 3600000 * 24,
+      talked: false,
+    },
+  ],
+};
+
+// Initialize Mock data in LocalStorage if empty
+function initMockData() {
+  if (typeof window === "undefined") return;
+  if (!localStorage.getItem("proj_list")) {
+    localStorage.setItem("proj_list", JSON.stringify(DEFAULT_PROJECTS));
+  }
+  DEFAULT_PROJECTS.forEach((p) => {
+    if (!localStorage.getItem(`nodes_${p.id}`)) {
+      localStorage.setItem(`nodes_${p.id}`, JSON.stringify(DEFAULT_NODES[p.id] || []));
+    }
+    if (!localStorage.getItem(`logs_${p.id}`)) {
+      localStorage.setItem(`logs_${p.id}`, JSON.stringify(DEFAULT_LOGS[p.id] || []));
+    }
+  });
+}
+
+// Initialize on import
+initMockData();
 
 export const dbService = {
   // PROJECTS
-  async getProjects(): Promise<Project[]> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { data, error } = await supa.from("projects").select("*").order("created_at", { ascending: false });
-    if (error) throw error;
-    return data || [];
-  },
+  async getProjects(mode: DBMode = "mock"): Promise<Project[]> {
 
-  async createProject(name: string): Promise<Project> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { data, error } = await supa.from("projects").insert({ name }).select().single();
-    if (error) throw error;
-    return data;
-  },
-
-  // WBS NODES
-  async getWbsNodes(projectId: string): Promise<WbsNode[]> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { data, error } = await supa.from("wbs_nodes").select("*").eq("project_id", projectId).order("order_rank", { ascending: true });
-    if (error) throw error;
-    return data || [];
-  },
-
-  async createWbsNode(projectId: string, parentId: string | null, nodeLevel: number, title: string): Promise<WbsNode> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-
-    // Determine the next order_rank
-    const { data: existingNodes, error: fetchError } = await supa.from("wbs_nodes")
-      .select("order_rank")
-      .eq("project_id", projectId)
-      .is("parent_id", parentId)
-      .order("order_rank", { ascending: false })
-      .limit(1);
-
-    if (fetchError) throw fetchError;
-
-    let nextRank = LexoRank.middle().toString();
-    if (existingNodes && existingNodes.length > 0) {
-      const highestRank = LexoRank.parse(existingNodes[0].order_rank);
-      nextRank = highestRank.genNext().toString();
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { data, error } = await supa.from("projects").select("*").order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data || []).map(d => ({
+          id: d.id,
+          title: d.title,
+          createdAt: new Date(d.created_at).getTime(),
+          updatedAt: new Date(d.updated_at).getTime(),
+        }));
+      } catch (err) {
+        console.error("Supabase getProjects error", err);
+      }
     }
 
-    const { data, error } = await supa.from("wbs_nodes").insert({
-      project_id: projectId,
-      parent_id: parentId,
-      node_level: nodeLevel,
+    if (mode === "firebase" && db) {
+      try {
+        const querySnapshot = await getDocs(collection(db, "projects"));
+        const projects: Project[] = [];
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          projects.push({
+            id: docSnap.id,
+            title: data.title || "",
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
+            updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : (data.updatedAt || Date.now()),
+          });
+        });
+        // If empty in Firestore, seed with default
+        if (projects.length === 0) {
+          const defaultProj = DEFAULT_PROJECTS[0];
+          await this.createProject(mode, defaultProj.title, defaultProj.id);
+          // Also seed nodes and logs
+          for (const node of DEFAULT_NODES[defaultProj.id]) {
+            await this.createNode(mode, defaultProj.id, node.label, node.parentId, node.id);
+          }
+          for (const log of DEFAULT_LOGS[defaultProj.id]) {
+            await this.createLog(mode, defaultProj.id, log.nodeId, log.rawMemo, log.situation, log.task, log.action, log.result, log.question, log.nextTodo, log.id, log.createdAt, log.talked);
+          }
+          return [defaultProj];
+        }
+        return projects.sort((a, b) => b.createdAt - a.createdAt);
+      } catch (err) {
+        console.error("Firestore getProjects failed, falling back to Mock", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const projs = localStorage.getItem("proj_list");
+    return projs ? JSON.parse(projs) : [];
+  },
+
+  async createProject(mode: DBMode = "mock", title: string, customId?: string): Promise<Project> {
+    const id = customId || generateId();
+    const newProj: Project = {
+      id,
       title,
-      order_rank: nextRank,
-    }).select().single();
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
 
-    if (error) throw error;
-    return data;
-  },
-
-  async updateWbsNode(nodeId: string, projectId: string, fields: Partial<WbsNode>): Promise<void> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { error } = await supa.from("wbs_nodes")
-      .update(fields)
-      .eq("id", nodeId)
-      .eq("project_id", projectId);
-    if (error) throw error;
-  },
-
-  async deleteWbsNode(nodeId: string, projectId: string): Promise<void> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { error } = await supa.from("wbs_nodes").delete().eq("id", nodeId).eq("project_id", projectId);
-    if (error) throw error;
-  },
-
-  async reorderNode(nodeId: string, projectId: string, newParentId: string | null, previousNodeRank: string | null, nextNodeRank: string | null, newNodeLevel: number): Promise<string> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-
-    let newRank: LexoRank;
-    if (!previousNodeRank && !nextNodeRank) {
-       newRank = LexoRank.middle();
-    } else if (!previousNodeRank) {
-       newRank = LexoRank.parse(nextNodeRank!).genPrev();
-    } else if (!nextNodeRank) {
-       newRank = LexoRank.parse(previousNodeRank).genNext();
-    } else {
-       newRank = LexoRank.parse(previousNodeRank).between(LexoRank.parse(nextNodeRank));
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("projects").insert({
+          id,
+          title,
+          created_at: new Date(newProj.createdAt).toISOString(),
+          updated_at: new Date(newProj.updatedAt).toISOString(),
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase createProject error", err);
+      }
+      return newProj;
     }
 
-    const rankString = newRank.toString();
+    if (mode === "firebase" && db) {
+      try {
+        await setDoc(doc(db, "projects", id), {
+          title,
+          createdAt: new Date(newProj.createdAt),
+          updatedAt: new Date(newProj.updatedAt),
+        });
+        return newProj;
+      } catch (err) {
+        console.error("Firestore createProject failed", err);
+      }
+    }
 
-    const { error } = await supa.from("wbs_nodes")
-      .update({
-        parent_id: newParentId,
-        order_rank: rankString,
-        node_level: newNodeLevel
-      })
-      .eq("id", nodeId)
-      .eq("project_id", projectId);
-
-    if (error) throw error;
-    return rankString;
+    // LocalStorage fallback
+    const list = await this.getProjects(mode);
+    list.unshift(newProj);
+    localStorage.setItem("proj_list", JSON.stringify(list));
+    return newProj;
   },
 
-  // TODOS
-  async getTodos(nodeId: string): Promise<Todo[]> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { data, error } = await supa.from("todos").select("*").eq("node_id", nodeId).order("created_at", { ascending: true });
-    if (error) throw error;
-    return data || [];
+  // NODES
+  async getNodes(mode: DBMode = "mock", projectId: string): Promise<ProjectNode[]> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { data, error } = await supa.from("nodes").select("*").eq("project_id", projectId).order("created_at", { ascending: true });
+        if (error) throw error;
+        return (data || []).map(d => ({
+          id: d.id,
+          parentId: d.parent_id,
+          label: d.label,
+          createdAt: new Date(d.created_at).getTime(),
+        }));
+      } catch (err) {
+        console.error("Supabase getNodes error", err);
+      }
+    }
+
+    if (mode === "firebase" && db) {
+      try {
+        const querySnapshot = await getDocs(collection(db, "projects", projectId, "nodes"));
+        const nodes: ProjectNode[] = [];
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          nodes.push({
+            id: docSnap.id,
+            parentId: data.parentId || null,
+            label: data.label || "",
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
+          });
+        });
+        return nodes.sort((a, b) => a.createdAt - b.createdAt);
+      } catch (err) {
+        console.error("Firestore getNodes failed, falling back to Mock", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const stored = localStorage.getItem(`nodes_${projectId}`);
+    return stored ? JSON.parse(stored) : [];
   },
 
-  async createTodo(nodeId: string, content: string | null = null): Promise<Todo> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { data, error } = await supa.from("todos").insert({
-      node_id: nodeId,
-      content,
-    }).select().single();
-    if (error) throw error;
-    return data;
+  async createNode(mode: DBMode = "mock", projectId: string, label: string, parentId: string | null, customId?: string): Promise<ProjectNode> {
+    const id = customId || generateId();
+    const newNode: ProjectNode = {
+      id,
+      parentId,
+      label,
+      createdAt: Date.now(),
+    };
+
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("nodes").insert({
+          id,
+          project_id: projectId,
+          parent_id: parentId,
+          label,
+          created_at: new Date(newNode.createdAt).toISOString(),
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase createNode error", err);
+      }
+      return newNode;
+    }
+
+
+    if (mode === "firebase" && db) {
+      try {
+        await setDoc(doc(db, "projects", projectId, "nodes", id), {
+          parentId,
+          label,
+          createdAt: new Date(newNode.createdAt),
+        });
+        return newNode;
+      } catch (err) {
+        console.error("Firestore createNode failed", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const list = await this.getNodes(mode, projectId);
+    list.push(newNode);
+    localStorage.setItem(`nodes_${projectId}`, JSON.stringify(list));
+    return newNode;
   },
 
-  async updateTodo(todoId: string, fields: Partial<Todo>): Promise<void> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { error } = await supa.from("todos")
-      .update(fields)
-      .eq("id", todoId);
-    if (error) throw error;
+  async updateNode(mode: DBMode = "mock", projectId: string, nodeId: string, fields: Partial<Omit<ProjectNode, "id" | "createdAt">>): Promise<void> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const payload: Record<string, unknown> = {};
+        if (fields.label !== undefined) payload.label = fields.label;
+        if (fields.parentId !== undefined) payload.parent_id = fields.parentId;
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("nodes")
+          .update(payload)
+          .eq("id", nodeId)
+          .eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase updateNode error", err);
+      }
+      return;
+    }
+
+    if (mode === "firebase" && db) {
+      try {
+        const docRef = doc(db, "projects", projectId, "nodes", nodeId);
+        await updateDoc(docRef, fields);
+        return;
+      } catch (err) {
+        console.error("Firestore updateNode failed", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const list = await this.getNodes(mode, projectId);
+    const index = list.findIndex((n) => n.id === nodeId);
+    if (index !== -1) {
+      list[index] = { ...list[index], ...fields };
+      localStorage.setItem(`nodes_${projectId}`, JSON.stringify(list));
+    }
   },
 
-  async deleteTodo(todoId: string): Promise<void> {
-    const supa = getSupabase();
-    if (!supa) throw new Error("Supabase is not initialized");
-    const { error } = await supa.from("todos").delete().eq("id", todoId);
-    if (error) throw error;
-  }
+  async deleteNode(mode: DBMode = "mock", projectId: string, nodeId: string): Promise<void> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("nodes").delete().eq("id", nodeId).eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase deleteNode error", err);
+      }
+      return;
+    }
+
+    if (mode === "firebase" && db) {
+      try {
+        await deleteDoc(doc(db, "projects", projectId, "nodes", nodeId));
+        return;
+      } catch (err) {
+        console.error("Firestore deleteNode failed", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const list = await this.getNodes(mode, projectId);
+    const filtered = list.filter((n) => n.id !== nodeId);
+    localStorage.setItem(`nodes_${projectId}`, JSON.stringify(filtered));
+  },
+
+  // LOGS
+  async getLogs(mode: DBMode = "mock", projectId: string): Promise<ProgressLog[]> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { data, error } = await supa.from("logs").select("*").eq("project_id", projectId).order("created_at", { ascending: false });
+        if (error) throw error;
+        return (data || []).map(d => ({
+          id: d.id,
+          nodeId: d.node_id,
+          rawMemo: d.raw_memo,
+          situation: d.situation,
+          task: d.task,
+          action: d.action,
+          result: d.result,
+          question: d.question,
+          nextTodo: d.next_todo,
+          talked: d.talked,
+          createdAt: new Date(d.created_at).getTime(),
+        }));
+      } catch (err) {
+        console.error("Supabase getLogs error", err);
+      }
+    }
+
+    if (mode === "firebase" && db) {
+      try {
+        const querySnapshot = await getDocs(collection(db, "projects", projectId, "logs"));
+        const logs: ProgressLog[] = [];
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          logs.push({
+            id: docSnap.id,
+            nodeId: data.nodeId || "",
+            rawMemo: data.rawMemo || "",
+            situation: data.situation || "",
+            task: data.task || "",
+            action: data.action || "",
+            result: data.result || "",
+            question: data.question || "",
+            nextTodo: data.nextTodo || "",
+            talked: data.talked === undefined ? false : data.talked,
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : (data.createdAt || Date.now()),
+          });
+        });
+        return logs.sort((a, b) => b.createdAt - a.createdAt);
+      } catch (err) {
+        console.error("Firestore getLogs failed, falling back to Mock", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const stored = localStorage.getItem(`logs_${projectId}`);
+    return stored ? JSON.parse(stored) : [];
+  },
+
+  async createLog(
+    mode: DBMode = "mock",
+    projectId: string,
+    nodeId: string,
+    rawMemo: string,
+    situation: string,
+    task: string,
+    action: string,
+    result: string,
+    question?: string,
+    nextTodo?: string,
+    customId?: string,
+    customCreatedAt?: number,
+    talked?: boolean
+  ): Promise<ProgressLog> {
+    const id = customId || generateId();
+    const createdAt = customCreatedAt || Date.now();
+    const isTalked = talked === undefined ? false : talked;
+    const newLog: ProgressLog = {
+      id,
+      nodeId,
+      rawMemo,
+      situation,
+      task,
+      action,
+      result,
+      question,
+      nextTodo,
+      createdAt,
+      talked: isTalked,
+    };
+
+
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("logs").insert({
+          id,
+          project_id: projectId,
+          node_id: nodeId,
+          raw_memo: rawMemo,
+          situation,
+          task,
+          action,
+          result,
+          question: question || null,
+          next_todo: nextTodo || null,
+          talked: isTalked,
+          created_at: new Date(createdAt).toISOString(),
+        });
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase createLog error", err);
+      }
+      return newLog;
+    }
+
+    if (mode === "firebase" && db) {
+      try {
+        await setDoc(doc(db, "projects", projectId, "logs", id), {
+          nodeId,
+          rawMemo,
+          situation,
+          task,
+          action,
+          result,
+          question: question || "",
+          nextTodo: nextTodo || "",
+          createdAt: new Date(createdAt),
+          talked: isTalked,
+        });
+        return newLog;
+      } catch (err) {
+        console.error("Firestore createLog failed", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const list = await this.getLogs(mode, projectId);
+    list.unshift(newLog);
+    localStorage.setItem(`logs_${projectId}`, JSON.stringify(list));
+    return newLog;
+  },
+
+    async updateLog(mode: DBMode = "mock", projectId: string, logId: string, updateData: Partial<Omit<ProgressLog, "id" | "createdAt">>): Promise<void> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const updatePayload: Record<string, unknown> = {};
+        if (updateData.nodeId !== undefined) updatePayload.node_id = updateData.nodeId;
+        if (updateData.rawMemo !== undefined) updatePayload.raw_memo = updateData.rawMemo;
+        if (updateData.situation !== undefined) updatePayload.situation = updateData.situation;
+        if (updateData.task !== undefined) updatePayload.task = updateData.task;
+        if (updateData.action !== undefined) updatePayload.action = updateData.action;
+        if (updateData.result !== undefined) updatePayload.result = updateData.result;
+        if (updateData.question !== undefined) updatePayload.question = updateData.question;
+        if (updateData.nextTodo !== undefined) updatePayload.next_todo = updateData.nextTodo;
+        if (updateData.talked !== undefined) updatePayload.talked = updateData.talked;
+
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("logs")
+          .update(updatePayload)
+          .eq("id", logId)
+          .eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase updateLog error", err);
+      }
+      return;
+    }
+
+        if (mode === "firebase" && db) {
+      try {
+        const docRef = doc(db, "projects", projectId, "logs", logId);
+        await updateDoc(docRef, updateData as Record<string, unknown>);
+        return;
+      } catch (err) {
+        console.error("Firestore updateLog failed", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const list = await this.getLogs(mode, projectId);
+    const index = list.findIndex((l) => l.id === logId);
+    if (index !== -1) {
+      list[index] = { ...list[index], ...updateData };
+      localStorage.setItem(`logs_${projectId}`, JSON.stringify(list));
+    }
+  },
+
+  async deleteLog(mode: DBMode = "mock", projectId: string, logId: string): Promise<void> {
+    if (mode === "supabase" && getSupabase()) {
+      try {
+        const supa = getSupabase();
+        if (!supa) throw new Error("Supabase is not initialized");
+        const { error } = await supa.from("logs").delete().eq("id", logId).eq("project_id", projectId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Supabase deleteLog error", err);
+      }
+      return;
+    }
+
+    if (mode === "firebase" && db) {
+      try {
+        await deleteDoc(doc(db, "projects", projectId, "logs", logId));
+        return;
+      } catch (err) {
+        console.error("Firestore deleteLog failed", err);
+      }
+    }
+
+    // LocalStorage fallback
+    const list = await this.getLogs(mode, projectId);
+    const filtered = list.filter((l) => l.id !== logId);
+    localStorage.setItem(`logs_${projectId}`, JSON.stringify(filtered));
+  },
 };
