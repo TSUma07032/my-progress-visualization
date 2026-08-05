@@ -1,12 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { getStoragePreference, setStoragePreference } from "../lib/dbService";
 import { initSupabase } from "../lib/supabase";
 
 interface AppContextType {
   isCreator: boolean;
   geminiApiKey: string;
+  storageMode: "firebase" | "mock" | "supabase";
   isMounted: boolean;
+  setStorageMode: (mode: "firebase" | "mock" | "supabase") => void;
   unlockCreator: (passcode: string) => boolean;
   lockCreator: () => void;
   saveGeminiApiKey: (key: string) => void;
@@ -27,6 +30,7 @@ const SUPABASE_KEY_STORAGE = "map_thinking_log_supabase_key";
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isCreator, setIsCreator] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [storageMode, setStorageModeState] = useState<"firebase" | "mock" | "supabase">("mock");
   const [isMounted, setIsMounted] = useState(false);
   const [supabaseUrl, setSupabaseUrl] = useState("");
   const [supabaseKey, setSupabaseKey] = useState("");
@@ -35,6 +39,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const storedApiKey = localStorage.getItem(GEMINI_KEY_STORAGE) || "";
     const storedCreator = localStorage.getItem(CREATOR_ROLE_STORAGE) === "true";
+    const storedMode = getStoragePreference();
     const storedSupabaseUrl = localStorage.getItem(SUPABASE_URL_STORAGE) || "";
     const storedSupabaseKey = localStorage.getItem(SUPABASE_KEY_STORAGE) || "";
     if (storedSupabaseUrl && storedSupabaseKey) {
@@ -43,10 +48,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     setGeminiApiKey(storedApiKey);
     setIsCreator(storedCreator);
+    setStorageModeState(storedMode);
     setSupabaseUrl(storedSupabaseUrl);
     setSupabaseKey(storedSupabaseKey);
     setIsMounted(true);
   }, []);
+
+  const setStorageMode = (mode: "firebase" | "mock" | "supabase") => {
+    setStorageModeState(mode);
+    setStoragePreference(mode);
+    // Reload state or trigger DB refresh if needed
+  };
 
   const unlockCreator = (passcode: string): boolean => {
     const envPasscode = process.env.NEXT_PUBLIC_CREATOR_PASSCODE;
@@ -103,7 +115,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       value={{
         isCreator,
         geminiApiKey,
+        storageMode,
         isMounted,
+        setStorageMode,
         unlockCreator,
         lockCreator,
         saveGeminiApiKey,
