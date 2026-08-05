@@ -1,27 +1,31 @@
 export interface Project {
   id: string;
+  name: string;
+  created_at: string;
+}
+
+export type WbsNodeStatus = 'not_started' | 'in_progress' | 'completed';
+
+export interface WbsNode {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  node_level: number;
   title: string;
-  createdAt: number; // store as milliseconds / timestamp for simple serialization
-  updatedAt: number;
+  status: WbsNodeStatus;
+  order_rank: string;
+  created_at: string;
 }
 
-export interface ProjectNode {
-  id: string;
-  parentId: string | null;
-  label: string;
-  createdAt: number;
+export interface WbsNodeWithNumber extends WbsNode {
+  wbs_number: string;
+  children?: WbsNodeWithNumber[];
 }
 
-export interface ProgressLog {
+export interface Todo {
   id: string;
-  nodeId: string;
-  rawMemo: string;
-  situation: string;
-  task: string;
-  action: string;
-  result: string;
-  question?: string;
-  nextTodo?: string;
-  createdAt: number;
-  talked?: boolean; // 話済み or まだ話していない
+  node_id: string;
+  content: string | null;
+  is_completed: boolean;
+  created_at: string;
 }
