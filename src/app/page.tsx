@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useApp } from "../context/AppContext";
 import { dbService } from "../lib/dbService";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { Project, ProjectNode } from "../lib/types";
+import { Project, ProjectNode, ProgressLog } from "../lib/types";
 import ProjectMap from "../components/ProjectMap";
 import {
   Sparkles,
@@ -45,6 +45,7 @@ export default function Home() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [nodes, setNodes] = useState<ProjectNode[]>([]);
+  const [logs, setLogs] = useState<ProgressLog[]>([]);
 
 
   // Tab State: "add" (進捗追加), "tree" (進捗ツリー閲覧), "report" (今週の進捗報告資料)
@@ -144,7 +145,8 @@ export default function Home() {
   const loadProjectDetails = async (projId: string) => {
     try {
       const fetchedNodes = await dbService.getNodes(storageMode, projId);
-      // const fetchedLogs = await dbService.getLogs(storageMode, projId);
+      const fetchedLogs = await dbService.getLogs(storageMode, projId);
+      setLogs(fetchedLogs);
       setNodes(fetchedNodes);
 
 
@@ -178,6 +180,7 @@ export default function Home() {
       setCheckedLogIds(new Set()); // Clear checkboxes
     } else {
       setNodes([]);
+      setLogs([]);
 
       setSelectedNodeId(null);
       setCheckedLogIds(new Set());
@@ -202,19 +205,19 @@ export default function Home() {
   // Compute set of node IDs containing unreported logs (talked === false)
   const unspokenNodeIds = useMemo(() => {
     const set = new Set<string>();
-    nodes.forEach((log: any) => {
-      if ((log as any).talked === false || (log as any).talked === undefined) {
-        set.add(log.parentId);
+    logs.forEach((log) => {
+      if (log.talked === false || log.talked === undefined) {
+        set.add(log.nodeId);
       }
     });
     return set;
-  }, [nodes]);
+  }, [logs]);
 
   // Filter logs for selected node in Tab 2
   const selectedNodeLogs = useMemo(() => {
     if (!selectedNodeId) return [];
-    return nodes.filter((log: any) => log.parentId === selectedNodeId);
-  }, [nodes, selectedNodeId]);
+    return logs.filter((log) => log.nodeId === selectedNodeId);
+  }, [logs, selectedNodeId]);
 
   // Get potential parent nodes (preventing circular hierarchy)
   const potentialParents = useMemo(() => {
@@ -291,6 +294,17 @@ export default function Home() {
     }
   };
 
+    const handleDeleteLog = async (logId: string) => {
+    if (!selectedProject) return;
+    try {
+      await dbService.deleteLog(storageMode, selectedProject.id, logId);
+      showToast("進捗ログを削除しました。");
+      await loadProjectDetails(selectedProject.id);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleDeleteNode = async (nodeId: string) => {
     if (!selectedProject) return;
     try {
@@ -310,7 +324,7 @@ export default function Home() {
       // Re-map logs belonging to this node to "node-root" or nearest parent
       const rootNode = nodes.find((n) => n.parentId === null) || nodes[0];
       const fallbackNodeId = rootNode ? rootNode.id : "node-root";
-      const affectedLogs = nodes.filter((log: any) => log.parentId === nodeId);
+      const affectedLogs = logs.filter((log) => log.nodeId === nodeId);
 
       for (const log of affectedLogs) {
         await dbService.updateLog(storageMode, selectedProject.id, log.id, { nodeId: fallbackNodeId });
@@ -355,9 +369,9 @@ export default function Home() {
   };
 
   // 4. LOG & STATUS OPERATIONS
-  const handleToggleTalked = async (log: ProjectNode) => {
+  const handleToggleTalked = async (log: ProgressLog) => {
     if (!selectedProject) return;
-    const nextStatus = !(log as any).talked;
+    const nextStatus = !log.talked;
     try {
       await dbService.updateLog(storageMode, selectedProject.id, log.id, { talked: nextStatus });
       showToast(
@@ -365,6 +379,7 @@ export default function Home() {
           ? "「話済み（報告済み）」に設定しました。"
           : "「まだ話していない（未報告）」に設定しました。"
       );
+      await loadProjectDetails(selectedProject.id);
     } catch (err) {
       console.error(err);
     }
@@ -552,18 +567,18 @@ export default function Home() {
     setIsCollectiveSummarizing(true);
     setCollectiveSummaryResult(null);
 
-    const logsToSummarize = nodes.filter((l: any) => checkedLogIds.has(l.id));
+    const logsToSummarize = logs.filter((l) => checkedLogIds.has(l.id));
     const combinedMemos = logsToSummarize
-      .map((l: any, idx) => `[進捗ログ ${idx + 1}]\n状況：${l.situation}\n課題：${l.task}\n行動：${l.action}\n結果：${l.result}\n相談：${l.question}\n次：${l.nextTodo}`)
+      .map((l, idx) => `[進捗ログ ${idx + 1}]\n状況：${l.situation}\n課題：${l.task}\n行動：${l.action}\n結果：${l.result}\n相談：${l.question}\n次：${l.nextTodo}`)
       .join("\n\n---\n\n");
 
     try {
       if (!geminiApiKey) {
         // Fallback simulation for merging summaries
         setTimeout(() => {
-          const combinedConclusion = `【一括要約】選ばれた ${logsToSummarize.length} 件の進捗の成果を統合：\n` + logsToSummarize.map((l: any) => l.result).join(" / ");
-          const combinedStruggle = `選ばれた進捗に共通するエラー・課題：\n` + logsToSummarize.map((l: any) => l.action).join("\n");
-          const combinedDiscussion = `統括的な議論テーマの提案：\n` + logsToSummarize.map((l: any) => l.question).join("\n");
+          const combinedConclusion = `【一括要約】選ばれた ${logsToSummarize.length} 件の進捗の成果を統合：\n` + logsToSummarize.map((l) => l.result).join(" / ");
+          const combinedStruggle = `選ばれた進捗に共通するエラー・課題：\n` + logsToSummarize.map((l) => l.action).join("\n");
+          const combinedDiscussion = `統括的な議論テーマの提案：\n` + logsToSummarize.map((l) => l.question).join("\n");
           setCollectiveSummaryResult({
             situation: "一括要約",
             task: "複数タスクの統合",
@@ -617,23 +632,21 @@ ${combinedMemos}
 
   // 7. TAB 3: WEEKLY REPORT (UNREPORTED LOGS FILTER)
   const unreportedLogsByNode = useMemo(() => {
-    // Only level 4 nodes represent progress logs
-    const unrep = nodes.filter((n: any) => n.level === 4 && (n.talked === false || n.talked === undefined));
+    const unrep = logs.filter((log) => log.talked === false || log.talked === undefined);
 
-    // Group by their parent node ID (Level 3 node ID)
-    const grouped: Record<string, { nodeLabel: string; nodes: ProjectNode[] }> = {};
+    const grouped: Record<string, { nodeLabel: string; logs: ProgressLog[] }> = {};
     unrep.forEach((log) => {
-      const parentNodeId = log.parentId || "unknown";
+      const parentNodeId = log.nodeId || "unknown";
       const node = nodes.find((n) => n.id === parentNodeId);
       const label = node ? node.label : "未分類の進捗";
       if (!grouped[parentNodeId]) {
-        grouped[parentNodeId] = { nodeLabel: label, nodes: [] };
+        grouped[parentNodeId] = { nodeLabel: label, logs: [] };
       }
-      grouped[parentNodeId].nodes.push(log);
+      grouped[parentNodeId].logs.push(log);
     });
 
     return Object.values(grouped);
-  }, [nodes]);
+  }, [logs, nodes]);
 
   // Handle saving credentials
   const handleSaveSupabaseConfig = (e: React.FormEvent) => {
@@ -881,7 +894,7 @@ ${combinedMemos}
               <span>③ 今週の進捗報告資料</span>
               {unreportedLogsByNode.length > 0 && (
                 <span className="bg-amber-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-black animate-pulse">
-                  {unreportedLogsByNode.reduce((sum, item) => sum + item.nodes.length, 0)}
+                  {unreportedLogsByNode.reduce((sum, item) => sum + item.logs.length, 0)}
                 </span>
               )}
             </button>
@@ -1338,7 +1351,7 @@ ${combinedMemos}
                         {selectedNodeLogs.length > 0 ? (
                           <div className="space-y-3">
                             {selectedNodeLogs.map((log) => {
-                              const isUnreported = (log as any).talked === false || (log as any).talked === undefined;
+                              const isUnreported = log.talked === false || log.talked === undefined;
                               return (
                                 <div
                                   key={log.id}
@@ -1382,14 +1395,14 @@ ${combinedMemos}
                                       {isCreator && (
                                         <div className="flex items-center gap-1 border-l pl-2">
                                           <button
-                                            onClick={() => setEditingLogId((log as any).id)}
+                                            onClick={() => setEditingLogId(log.id)}
                                             className="text-slate-400 hover:text-indigo-600 transition"
                                             title="進捗を編集"
                                           >
                                             <Edit3 className="w-3.5 h-3.5" />
                                           </button>
                                           <button
-                                            onClick={() => handleDeleteNode(log.id)}
+                                            onClick={() => handleDeleteLog(log.id)}
                                             className="text-slate-400 hover:text-rose-600 transition"
                                             title="進捗を削除"
                                           >
@@ -1448,12 +1461,12 @@ ${combinedMemos}
                                     </form>
                                   ) : (
                                     <div className="space-y-2 text-xs leading-relaxed">
-                                                                            <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Situation (状況)</span><p className="text-slate-700">{(log as any).situation}</p></div>
-                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Task (課題)</span><p className="font-bold text-slate-800">{(log as any).task}</p></div>
-                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Action (行動)</span><p className="text-slate-600 whitespace-pre-wrap">{(log as any).action}</p></div>
-                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Result (結果)</span><p className="font-bold text-slate-800">{(log as any).result}</p></div>
-                                      {(log as any).question && <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Question (相談)</span><p className="font-semibold text-slate-700 italic">❓ {(log as any).question}</p></div>}
-                                      {(log as any).nextTodo && <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Next (次)</span><p className="text-slate-700">{(log as any).nextTodo}</p></div>}
+                                                                            <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Situation (状況)</span><p className="text-slate-700">{log.situation}</p></div>
+                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Task (課題)</span><p className="font-bold text-slate-800">{log.task}</p></div>
+                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Action (行動)</span><p className="text-slate-600 whitespace-pre-wrap">{log.action}</p></div>
+                                      <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Result (結果)</span><p className="font-bold text-slate-800">{log.result}</p></div>
+                                      {log.question && <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Question (相談)</span><p className="font-semibold text-slate-700 italic">❓ {log.question}</p></div>}
+                                      {log.nextTodo && <div className="space-y-0.5"><span className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">Next (次)</span><p className="text-slate-700">{log.nextTodo}</p></div>}
                                     </div>
                                   )}
                                 </div>
@@ -1533,7 +1546,7 @@ ${combinedMemos}
                           </h3>
 
                           <div className="space-y-6 pl-2">
-                            {group.nodes.map((log, logIdx) => (
+                            {group.logs.map((log: ProgressLog, logIdx: number) => (
                               <div
                                 key={log.id}
                                 className="border-b border-dashed border-slate-200 pb-4 last:border-none last:pb-0 space-y-3 text-xs"
@@ -1545,12 +1558,12 @@ ${combinedMemos}
                                 </div>
 
                                 {/* 1. Conclusion */}
-                                                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-blue-600">■</span><span>Situation (状況)</span></h4><p className="text-slate-700 pl-4">{(log as any).situation}</p></div>
-                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-purple-600">■</span><span>Task (課題)</span></h4><p className="text-slate-800 font-semibold pl-4">{(log as any).task}</p></div>
-                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-amber-600">■</span><span>Action (行動)</span></h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{(log as any).action}</p></div>
-                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-emerald-600">■</span><span>Result (結果)</span></h4><p className="text-slate-800 font-semibold pl-4">{(log as any).result}</p></div>
-                                {(log as any).question && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-indigo-600">■</span><span>Question (相談)</span></h4><p className="text-indigo-900 font-bold italic pl-4">❓ {(log as any).question}</p></div>}
-                                {(log as any).nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-orange-600">■</span><span>Next (次)</span></h4><p className="text-slate-700 pl-4">{(log as any).nextTodo}</p></div>}
+                                                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-blue-600">■</span><span>Situation (状況)</span></h4><p className="text-slate-700 pl-4">{log.situation}</p></div>
+                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-purple-600">■</span><span>Task (課題)</span></h4><p className="text-slate-800 font-semibold pl-4">{log.task}</p></div>
+                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-amber-600">■</span><span>Action (行動)</span></h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{log.action}</p></div>
+                                <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-emerald-600">■</span><span>Result (結果)</span></h4><p className="text-slate-800 font-semibold pl-4">{log.result}</p></div>
+                                {log.question && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-indigo-600">■</span><span>Question (相談)</span></h4><p className="text-indigo-900 font-bold italic pl-4">❓ {log.question}</p></div>}
+                                {log.nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug flex items-center gap-1"><span className="text-orange-600">■</span><span>Next (次)</span></h4><p className="text-slate-700 pl-4">{log.nextTodo}</p></div>}
                               </div>
                             ))}
                           </div>
@@ -1604,7 +1617,7 @@ ${combinedMemos}
                 </h3>
 
                 <div className="space-y-6 pl-2">
-                  {group.nodes.map((log, logIdx) => (
+                  {group.logs.map((log: ProgressLog, logIdx: number) => (
                     <div
                       key={"print-log-" + log.id}
                       className="border-b border-dashed border-slate-300 pb-4 last:border-none last:pb-0 space-y-3 text-xs"
@@ -1614,12 +1627,12 @@ ${combinedMemos}
                         <span>記録日: {new Date(log.createdAt).toLocaleDateString("ja-JP")}</span>
                       </div>
 
-                                            <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Situation (状況)</h4><p className="text-slate-700 pl-4">{(log as any).situation}</p></div>
-                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Task (課題)</h4><p className="text-slate-800 font-semibold pl-4">{(log as any).task}</p></div>
-                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Action (行動)</h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{(log as any).action}</p></div>
-                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Result (結果)</h4><p className="text-slate-800 font-semibold pl-4">{(log as any).result}</p></div>
-                      {(log as any).question && <div className="space-y-0.5"><h4 className="font-bold text-indigo-800 leading-snug">■ Question (相談)</h4><p className="text-indigo-900 font-bold pl-4 italic">❓ {(log as any).question}</p></div>}
-                      {(log as any).nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-orange-800 leading-snug">■ Next (次)</h4><p className="text-orange-900 font-semibold pl-4">→ {(log as any).nextTodo}</p></div>}
+                                            <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Situation (状況)</h4><p className="text-slate-700 pl-4">{log.situation}</p></div>
+                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Task (課題)</h4><p className="text-slate-800 font-semibold pl-4">{log.task}</p></div>
+                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Action (行動)</h4><p className="text-slate-700 pl-4 leading-relaxed whitespace-pre-wrap">{log.action}</p></div>
+                      <div className="space-y-0.5"><h4 className="font-bold text-slate-900 leading-snug">■ Result (結果)</h4><p className="text-slate-800 font-semibold pl-4">{log.result}</p></div>
+                      {log.question && <div className="space-y-0.5"><h4 className="font-bold text-indigo-800 leading-snug">■ Question (相談)</h4><p className="text-indigo-900 font-bold pl-4 italic">❓ {log.question}</p></div>}
+                      {log.nextTodo && <div className="space-y-0.5"><h4 className="font-bold text-orange-800 leading-snug">■ Next (次)</h4><p className="text-orange-900 font-semibold pl-4">→ {log.nextTodo}</p></div>}
                     </div>
                   ))}
                 </div>
