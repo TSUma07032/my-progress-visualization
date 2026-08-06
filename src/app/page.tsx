@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
@@ -31,12 +32,12 @@ export default function Home() {
     geminiApiKey,
     storageMode,
     isMounted,
-    setStorageMode,
+
     unlockCreator,
     lockCreator,
     saveGeminiApiKey,
-    supabaseUrl,
-    supabaseKey,
+
+
     saveSupabaseConfig,
     clearSupabaseConfig,
   } = useApp();
@@ -57,10 +58,12 @@ export default function Home() {
   // Raw Memo Input for Tab 1 (進捗追加)
   const [rawMemo, setRawMemo] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
   // Split AI Proposed Results for Tab 1
   const [analyzedItems, setAnalyzedItems] = useState<any[]>([]);
+  const [commonLevel3Node, setCommonLevel3Node] = useState<any>(null);
   const [isResultSimulated, setIsResultSimulated] = useState(false);
 
   // Checkboxes for Collective AI Summarizing in Tab 2
@@ -121,7 +124,7 @@ export default function Home() {
   const loadProjects = async () => {
     setIsLoadingData(true);
     try {
-      const list = await dbService.getProjects(storageMode);
+      const list = await dbService.getProjects();
       setProjects(list);
       if (list.length > 0) {
         // Find if a project was already selected, or default to the first
@@ -250,13 +253,13 @@ export default function Home() {
     if (!newProjectTitle.trim()) return;
 
     try {
-      const proj = await dbService.createProject(storageMode, newProjectTitle.trim());
+      const proj = await dbService.createProject(undefined, newProjectTitle.trim());
       setNewProjectTitle("");
       setShowAddProjectModal(false);
       showToast(`プロジェクト「${proj.title}」を作成しました。`);
 
       // Reload projects list and force select the new one
-      const list = await dbService.getProjects(storageMode);
+      const list = await dbService.getProjects();
       setProjects(list);
       const created = list.find((p) => p.id === proj.id);
       if (created) {
@@ -468,6 +471,7 @@ export default function Home() {
           };
         });
         setAnalyzedItems(hydrated);
+        setCommonLevel3Node(data.commonLevel3Node || null);
         setIsResultSimulated(!!data.isSimulated);
         showToast(
           data.isSimulated
@@ -486,19 +490,75 @@ export default function Home() {
   };
 
   // Register multiple split items into the DB
-  const handleSaveAllAnalyzedItems = async () => {
+
+
+  const handleRequestSummary = async () => {
+    if (!selectedProject || !selectedNodeId) return;
+    const nodeObj = nodes.find(n => n.id === selectedNodeId);
+    if (!nodeObj) return;
+
+    try {
+      setIsSummarizing(true);
+
+      const nodeChildren = nodes.filter(n => n.parentId === selectedNodeId);
+      const nodeLogs = logs.filter(l => l.nodeId === selectedNodeId || nodeChildren.some(c => c.id === l.nodeId));
+
+      const res = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          node: nodeObj,
+          children: nodeChildren,
+          logs: nodeLogs,
+          apiKey: geminiApiKey
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Summarization failed");
+
+      await dbService.updateNode("supabase", selectedProject.id, selectedNodeId, { summary: data.summary });
+      showToast("要約を生成し、保存しました。");
+      await loadProjectDetails(selectedProject.id);
+    } catch (err: any) {
+      alert("要約エラー: " + err.message);
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+const handleSaveAllAnalyzedItems = async () => {
     if (!selectedProject || analyzedItems.length === 0) return;
 
     try {
       setIsAnalyzing(true);
+
+      let commonParentId: string | null = null;
+      if (commonLevel3Node && commonLevel3Node.create) {
+        // Create the common Level 3 node first
+        const parentId = commonLevel3Node.parentId === "node-root" || !commonLevel3Node.parentId ? null : commonLevel3Node.parentId;
+        const createdNode = await dbService.createNode(
+          "supabase",
+          selectedProject.id,
+          commonLevel3Node.label.trim(),
+          parentId
+        );
+        commonParentId = createdNode.id;
+      }
+
       for (const item of analyzedItems) {
         let finalNodeId = item.nodeId;
 
-        // Create new node if mapping type is "new"
         if (item.mappingType === "new" && item.newNodeLabel.trim()) {
-          const parentId = item.newNodeParentId === "node-root" || !item.newNodeParentId ? null : item.newNodeParentId;
+          // If the AI suggested NEW_COMMON_LEVEL3, or if we just created one and want to group them
+          // Let's check if the item is supposed to be under the common level 3
+          let parentId = item.newNodeParentId === "node-root" || !item.newNodeParentId ? null : item.newNodeParentId;
+
+          if ((parentId === "NEW_COMMON_LEVEL3" || parentId === null) && commonParentId) {
+            parentId = commonParentId;
+          }
+
           const createdNode = await dbService.createNode(
-            storageMode,
+            "supabase",
             selectedProject.id,
             item.newNodeLabel.trim(),
             parentId
@@ -506,25 +566,23 @@ export default function Home() {
           finalNodeId = createdNode.id;
         }
 
-        // Save progress log
-        await dbService.createLog(storageMode,
+        await dbService.createLog(
+          "supabase",
           selectedProject.id,
-          finalNodeId || (nodes.length > 0 ? nodes[0].id : "node-root"),
+          finalNodeId || (nodes.length > 0 ? nodes[0].id : ""),
           rawMemo,
           item.situation,
           item.task,
           item.action,
           item.result,
           item.question,
-          item.nextTodo,
-          undefined,
-          undefined,
-          false // default: unmarked as talked (unreported)
+          item.nextTodo
         );
       }
 
-      showToast(`${analyzedItems.length} 件の進捗ログをツリーマップにマッピング・登録しました！`);
+      showToast(`${analyzedItems.length} 件の進捗ログをマッピング・登録しました！`);
       setAnalyzedItems([]);
+      setCommonLevel3Node(null);
       setRawMemo("");
       await loadProjectDetails(selectedProject.id);
 
@@ -758,74 +816,6 @@ ${combinedMemos}
           {/* Configuration toolbar */}
           <div className="flex items-center gap-2 self-end md:self-auto">
 
-            {/* Storage preferences switch */}
-            <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border">
-              <button
-                onClick={() => setStorageMode("mock")}
-                className={`text-[10px] font-bold px-2 py-1 rounded transition-all duration-150 ${
-                  storageMode === "mock"
-                    ? "bg-white text-slate-800 shadow-sm"
-                    : "text-slate-400 hover:text-slate-600"
-                }`}
-              >
-                モックモード
-              </button>
-              <button
-                onClick={() => setStorageMode("firebase")}
-                className={`text-[10px] font-bold px-2 py-1 rounded transition-all duration-150 ${
-                  storageMode === "firebase"
-                    ? "bg-white text-slate-800 shadow-sm"
-                    : "text-slate-400 hover:text-slate-600"
-                }`}
-              >
-                Firebase
-              </button>
-              <button
-                onClick={() => setStorageMode("supabase")}
-                className={`text-[10px] font-bold px-2 py-1 rounded transition-all duration-150 ${
-                  storageMode === "supabase"
-                    ? "bg-white text-slate-800 shadow-sm"
-                    : "text-slate-400 hover:text-slate-600"
-                }`}
-              >
-                Supabase
-              </button>
-            </div>
-
-            {/* Supabase configuration */}
-            <button
-              onClick={() => {
-                setSupabaseUrlInput(supabaseUrl);
-                setSupabaseKeyInput(supabaseKey);
-                setShowSupabaseModal(true);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
-                supabaseUrl && supabaseKey
-                  ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
-                  : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5 text-blue-500" />
-              <span>{supabaseUrl && supabaseKey ? "Supabase設定済" : "Supabase設定"}</span>
-            </button>
-
-            {/* Gemini API key configuration */}
-            <button
-              onClick={() => {
-                setApiKeyInput(geminiApiKey);
-                setShowKeyModal(true);
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${
-                geminiApiKey
-                  ? "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100"
-                  : "bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 animate-pulse"
-              }`}
-            >
-              <Settings className="w-3.5 h-3.5 text-amber-500" />
-              <span>{geminiApiKey ? "Gemini APIキー設定済" : "Gemini APIキーを設定"}</span>
-            </button>
-
-            {/* Role locking toggle */}
             {isCreator ? (
               <button
                 onClick={lockCreator}
@@ -901,7 +891,7 @@ ${combinedMemos}
           </div>
 
           <div className="text-[11px] font-bold text-slate-400">
-            {storageMode === "firebase" ? "📡 Firebase同期接続中" : storageMode === "supabase" ? "🐘 Supabase同期接続中" : "💾 ブラウザのLocalStorageに保存中"}
+            {false ? "📡 Firebase同期接続中" : storageMode === "supabase" ? "🐘 Supabase同期接続中" : "💾 ブラウザのLocalStorageに保存中"}
           </div>
         </div>
       </div>
@@ -1036,6 +1026,27 @@ ${combinedMemos}
                               すべて一括で保存・登録
                             </button>
                           </div>
+
+
+                          {commonLevel3Node && commonLevel3Node.create && (
+                            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 shadow-sm mb-4">
+                              <h4 className="text-xs font-bold text-blue-800 flex items-center gap-1.5 mb-2">
+                                <FolderPlus className="w-4 h-4" />
+                                共通親ノード（レベル3）の自動作成
+                              </h4>
+                              <p className="text-[10px] text-blue-600 mb-2">
+                                複数の進捗をまとめるため、以下の親ノードが作成されます。
+                              </p>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={commonLevel3Node.label}
+                                  onChange={(e) => setCommonLevel3Node({...commonLevel3Node, label: e.target.value})}
+                                  className="flex-1 bg-white border border-blue-200 rounded p-1.5 text-xs text-blue-900 font-bold"
+                                />
+                              </div>
+                            </div>
+                          )}
 
                           {/* Render proposed split cards */}
                           <div className="space-y-4">

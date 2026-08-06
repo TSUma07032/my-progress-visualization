@@ -1,15 +1,15 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { getStoragePreference, setStoragePreference } from "../lib/dbService";
+import { setStoragePreference } from "../lib/dbService";
 import { initSupabase } from "../lib/supabase";
 
 interface AppContextType {
   isCreator: boolean;
   geminiApiKey: string;
-  storageMode: "firebase" | "mock" | "supabase";
+  storageMode: "supabase";
   isMounted: boolean;
-  setStorageMode: (mode: "firebase" | "mock" | "supabase") => void;
+  setStorageMode: () => void;
   unlockCreator: (passcode: string) => boolean;
   lockCreator: () => void;
   saveGeminiApiKey: (key: string) => void;
@@ -30,7 +30,7 @@ const SUPABASE_KEY_STORAGE = "map_thinking_log_supabase_key";
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isCreator, setIsCreator] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [storageMode, setStorageModeState] = useState<"firebase" | "mock" | "supabase">("mock");
+  const [storageMode, setStorageModeState] = useState<"supabase">("supabase");
   const [isMounted, setIsMounted] = useState(false);
   const [supabaseUrl, setSupabaseUrl] = useState("");
   const [supabaseKey, setSupabaseKey] = useState("");
@@ -39,7 +39,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const storedApiKey = localStorage.getItem(GEMINI_KEY_STORAGE) || "";
     const storedCreator = localStorage.getItem(CREATOR_ROLE_STORAGE) === "true";
-    const storedMode = getStoragePreference();
+    const storedMode = "supabase";
     const storedSupabaseUrl = localStorage.getItem(SUPABASE_URL_STORAGE) || "";
     const storedSupabaseKey = localStorage.getItem(SUPABASE_KEY_STORAGE) || "";
     if (storedSupabaseUrl && storedSupabaseKey) {
@@ -54,9 +54,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setIsMounted(true);
   }, []);
 
-  const setStorageMode = (mode: "firebase" | "mock" | "supabase") => {
-    setStorageModeState(mode);
-    setStoragePreference(mode);
+  const setStorageMode = () => {
+    setStorageModeState("supabase");
+    setStoragePreference("supabase");
     // Reload state or trigger DB refresh if needed
   };
 

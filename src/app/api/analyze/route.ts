@@ -23,65 +23,44 @@ export async function POST(request: Request) {
         model: "gemini-3.1-flash-lite", // 👇 修正: 確実なモデル名に変更
         generationConfig: {
           responseMimeType: "application/json",
-          responseSchema: {
-            type: SchemaType.OBJECT, // 👇 修正: SchemaTypeを使用
+responseSchema: {
+            type: SchemaType.OBJECT,
             properties: {
               isSufficient: {
                 type: SchemaType.BOOLEAN,
-                description: "入力されたメモ（およびチャット履歴）から、STAR法（Situation, Task, Action, Result）を満たす十分な情報が抽出できるかどうか。情報が足りない（例：行動だけ書いてあって結果がない、状況が不明など）場合は false にする。",
+                description: "入力されたメモから、STAR法（Situation, Task, Action, Result）を満たす十分な情報が抽出できるかどうか。",
               },
               clarificationQuestion: {
                 type: SchemaType.STRING,
-                description: "isSufficient が false の場合、ユーザーに足りない情報（ActionやResultなど）を聞き出すための質問文。isSufficientがtrueの場合はnull。",
+                description: "isSufficient が false の場合、ユーザーに足りない情報を聞き出す質問文。",
                 nullable: true,
+              },
+              commonLevel3Node: {
+                type: SchemaType.OBJECT,
+                description: "複数の進捗項目（レベル4）をまとめるための共通の親ノード（レベル3）を新設する必要がある場合に指定します。既存の親で十分な場合はnull。",
+                nullable: true,
+                properties: {
+                  create: { type: SchemaType.BOOLEAN },
+                  label: { type: SchemaType.STRING },
+                  parentId: { type: SchemaType.STRING }
+                },
+                required: ["create", "label", "parentId"]
               },
               items: {
                 type: SchemaType.ARRAY,
-                description: "抽出された進捗データの配列。isSufficient が false の場合は空配列でよい。",
+                description: "抽出された進捗データの配列。",
                 items: {
                   type: SchemaType.OBJECT,
                   properties: {
-                    situation: {
-                      type: SchemaType.STRING,
-                      description: "Situation (状況): 現在の状況や背景",
-                    },
-                    task: {
-                      type: SchemaType.STRING,
-                      description: "Task (課題): 取り組むべき課題、目標",
-                    },
-                    action: {
-                      type: SchemaType.STRING,
-                      description: "Action (行動): 具体的に何を行ったか（エラーや試行錯誤のプロセスも含む）",
-                    },
-                    result: {
-                      type: SchemaType.STRING,
-                      description: "Result (結果): その結果どうなったか、成果や新たな気づき",
-                    },
-                    question: {
-                      type: SchemaType.STRING,
-                      description: "Question (疑問・相談): 報告相手（教授や上司）へ相談すべき具体的な問いの提案。",
-                      nullable: true,
-                    },
-                    nextTodo: {
-                      type: SchemaType.STRING,
-                      description: "Next (次のTodo): 次に取り組むべきこと",
-                      nullable: true,
-                    },
-                    nodeId: {
-                      type: SchemaType.STRING,
-                      description: "提供された既存ノードリストの中で、入力内容が最も該当するノードのID。該当する既存ノードがない場合は null または空文字にしてください。",
-                      nullable: true,
-                    },
-                    newNodeLabel: {
-                      type: SchemaType.STRING,
-                      description: "既存ノードに該当しない新規トピックだと判断した場合に、新しく作成するノードの表示名（例:『実験2：パラメータチューニング』）。新規作成しない場合は null または空文字にしてください。",
-                      nullable: true,
-                    },
-                    newNodeParentId: {
-                      type: SchemaType.STRING,
-                      description: "新規ノードを作成する場合、その親となる既存ノードのID。ルートレベルに追加する場合は null または空文字にしてください。",
-                      nullable: true,
-                    },
+                    situation: { type: SchemaType.STRING },
+                    task: { type: SchemaType.STRING },
+                    action: { type: SchemaType.STRING },
+                    result: { type: SchemaType.STRING },
+                    question: { type: SchemaType.STRING, nullable: true },
+                    nextTodo: { type: SchemaType.STRING, nullable: true },
+                    nodeId: { type: SchemaType.STRING, nullable: true },
+                    newNodeLabel: { type: SchemaType.STRING, nullable: true },
+                    newNodeParentId: { type: SchemaType.STRING, nullable: true },
                   },
                   required: ["situation", "task", "action", "result"],
                 }
@@ -92,13 +71,24 @@ export async function POST(request: Request) {
         },
       });
 
+
       const systemPrompt = `あなたは研究・プロジェクトの編集者です。ユーザーの入力メモ（およびチャット履歴）から、進捗をSTAR法（Situation:状況、Task:課題、Action:行動、Result:結果）を用いて抽出してください。
 
+プロジェクトのタスク構造は基本的に4段階のレベル（階層）で管理されます：
+- レベル1（プロジェクト名）: 例「Webサイトリニューアル」
+- レベル2（大項目 / フェーズ）: 例「要件定義」「システム開発」
+- レベル3（中項目 / 具体的な成果物）: 例「トップページデザイン」「問い合わせフォーム開発」
+- レベル4（小項目 / 具体的なタスク）: 例「HTML/CSSコーディング」「バリデーション実装」
+
+進捗（ログ）を追加する際は、原則として「レベル4」のノードとして追加します。
+
 重要ルール：
-1. ユーザーが悩んでいること、エラー、試行錯誤したプロセスは「Action(行動)」や「Result(結果)」に詳細に残してください。綺麗に成功体験だけに要約してはいけません。
-2. もし入力内容からSTARの4要素（状況、課題、行動、結果）を十分に抽出できない場合（例：何をやったか（Action）しか書かれていない、結果が不明など）は、isSufficientをfalseにし、不足している情報を聞き出すための親しみやすい質問をclarificationQuestionに設定してください。
-3. 十分な情報があればisSufficientをtrueにし、itemsにSTARデータを格納します。入力メモに複数の独立したトピックが含まれる場合は、items配列に複数要素として分割して出力してください。
+1. ユーザーが悩んでいること、エラー、試行錯誤したプロセスは「Action(行動)」や「Result(結果)」に詳細に残してください。
+2. 入力内容からSTARの4要素が不十分な場合は isSufficient を false にし、clarificationQuestion に質問を設定してください。
+3. 十分な情報があれば items にSTARデータを格納します。
+4. 【重要】一度に複数の進捗（レベル4）を追加する際、それらをまとめる適切なレベル3の親ノードが存在しない場合は、\`commonLevel3Node\` を使って「共通のレベル3ノード」の作成を提案してください。その場合、各itemの \`newNodeParentId\` には "NEW_COMMON_LEVEL3" などのプレースホルダーを入れるか空にし、画面側で紐付けられるように考慮してください。既存の親で事足りる場合は \`commonLevel3Node\` は null にしてください。
 `;
+
 
       const prompt = `
 ${systemPrompt}
@@ -127,6 +117,7 @@ ${rawMemo}
 
       const parsed = JSON.parse(text);
 
+
       if (!parsed.isSufficient) {
          return NextResponse.json({
             isSufficient: false,
@@ -135,6 +126,8 @@ ${rawMemo}
             isSimulated: false,
          });
       }
+
+      const commonLevel3Node = parsed.commonLevel3Node || null;
 
       const items = (parsed.items || []).map((item: any) => ({
         situation: item.situation || "",
@@ -147,6 +140,7 @@ ${rawMemo}
         newNodeLabel: item.newNodeLabel || null,
         newNodeParentId: item.newNodeParentId || null,
       }));
+
 
       // Fallback if array is empty
       if (items.length === 0) {
@@ -163,6 +157,7 @@ ${rawMemo}
 
       return NextResponse.json({
         isSufficient: true,
+        commonLevel3Node,
         items,
         isSimulated: false,
       });
