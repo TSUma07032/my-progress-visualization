@@ -1,30 +1,42 @@
 export interface Project {
   id: string;
   title: string;
-  summary?: string;
-  createdAt: number; // store as milliseconds / timestamp for simple serialization
+  createdAt: number;
   updatedAt: number;
 }
 
-export interface ProjectNode {
+export interface Phase {
   id: string;
-  parentId: string | null;
-  label: string;
+  projectId: string;
+  title: string;
   summary?: string;
   createdAt: number;
+  updatedAt: number;
 }
 
-export interface ProgressLog {
+export interface Deliverable {
   id: string;
-  nodeId: string;
-  rawMemo: string;
-  situation: string;
-  task: string;
-  action: string;
-  result: string;
-  question?: string;
-  nextTodo?: string;
+  phaseId: string;
+  title: string;
   summary?: string;
   createdAt: number;
-  talked?: boolean; // 話済み or まだ話していない
+  updatedAt: number;
+}
+
+export interface Task {
+  id: string;
+  deliverableId: string;
+  title: string;
+  content?: string;
+  status: 'todo' | 'in_progress' | 'done';
+  createdAt: number;
+  updatedAt: number;
+}
+
+// Union type for the UI tree selection
+export type TreeNodeType = 'project' | 'phase' | 'deliverable' | 'task';
+
+export interface SelectedNode {
+  type: TreeNodeType;
+  id: string;
 }
