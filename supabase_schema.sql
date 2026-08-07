@@ -1,6 +1,12 @@
--- Supabase Schema for Progress Tracker App
+-- Supabase Schema for Progress Tracker App (V2 - 4 Levels)
 
--- 1. Projects Table
+-- Note: To allow public access for testing/development (not recommended for production):
+-- ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE public.phases DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE public.deliverables DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE public.tasks DISABLE ROW LEVEL SECURITY;
+
+-- 1. Level 1: Projects (Webサイトリニューアル)
 CREATE TABLE public.projects (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -8,35 +14,34 @@ CREATE TABLE public.projects (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 2. Nodes Table
-CREATE TABLE public.nodes (
+-- 2. Level 2: Phases / Major Deliverables (要件定義, デザイン, システム開発)
+CREATE TABLE public.phases (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
-    parent_id TEXT REFERENCES public.nodes(id) ON DELETE CASCADE,
-    label TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+    title TEXT NOT NULL,
+    summary TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 3. Logs Table
-CREATE TABLE public.logs (
+-- 3. Level 3: Deliverables / Mid-level items (トップページデザイン, 問い合わせフォーム開発)
+CREATE TABLE public.deliverables (
     id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
-    node_id TEXT NOT NULL REFERENCES public.nodes(id) ON DELETE CASCADE,
-    raw_memo TEXT NOT NULL,
-    situation TEXT NOT NULL,
-    task TEXT NOT NULL,
-    action TEXT NOT NULL,
-    result TEXT NOT NULL,
-    question TEXT,
-    next_todo TEXT,
-    talked BOOLEAN DEFAULT false NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+    phase_id TEXT NOT NULL REFERENCES public.phases(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    summary TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- Note: In Supabase, if you want anyone to be able to read/write without authentication for testing,
--- you may need to disable Row Level Security (RLS) on these tables or write open policies.
--- By default, inserting via anon key might fail if RLS is enabled without policies.
--- To allow public access (for testing/development):
--- ALTER TABLE public.projects DISABLE ROW LEVEL SECURITY;
--- ALTER TABLE public.nodes DISABLE ROW LEVEL SECURITY;
--- ALTER TABLE public.logs DISABLE ROW LEVEL SECURITY;
+-- 4. Level 4: Tasks / Work packages / Progress items (HTML/CSSコーディング, 入力バリデーション実装)
+CREATE TABLE public.tasks (
+    id TEXT PRIMARY KEY,
+    deliverable_id TEXT NOT NULL REFERENCES public.deliverables(id) ON DELETE CASCADE,
+    title TEXT NOT NULL, -- Short description or current progress text
+    content TEXT, -- Detail description or TODOs
+    status TEXT DEFAULT 'todo', -- todo, in_progress, done
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
